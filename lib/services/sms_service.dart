@@ -45,6 +45,10 @@ class SmsService {
     return await _channel.invokeMethod<int>('markNotMoney', {'id': id}) ?? 0;
   }
 
+  static Future<String> exportCsv() async {
+    return await _channel.invokeMethod<String>('exportCsv') ?? '';
+  }
+
   static Future<void> requestBatteryExemption() async {
     await _channel.invokeMethod('requestBatteryExemption');
   }

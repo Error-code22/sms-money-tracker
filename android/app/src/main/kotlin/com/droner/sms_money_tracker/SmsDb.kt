@@ -4,9 +4,16 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
@@ -241,16 +248,42 @@ object SmsDb {
     }
 
     fun getSummary(context: Context): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
         val monthStart = startOfMonth(System.currentTimeMillis())
+
+        val others = JSONArray()
+        database.rawQuery(
+            "SELECT currency, COUNT(*) AS cnt, " +
+                "SUM(CASE WHEN type='debit' THEN amount ELSE 0 END) AS debit, " +
+                "SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) AS credit " +
+                "FROM transactions WHERE currency != ? GROUP BY currency ORDER BY cnt DESC",
+            arrayOf(headline)
+        ).use { c ->
+            while (c.moveToNext()) {
+                others.put(
+                    JSONObject().apply {
+                        put("currency", c.getString(0))
+                        put("count", c.getInt(1))
+                        put("debit", c.getDouble(2))
+                        put("credit", c.getDouble(3))
+                    }
+                )
+            }
+        }
+
         return JSONObject().apply {
-            put("spentThisMonth", sumBy(context, "debit", monthStart))
-            put("receivedThisMonth", sumBy(context, "credit", monthStart))
-            put("spentTotal", sumBy(context, "debit", 0L))
-            put("receivedTotal", sumBy(context, "credit", 0L))
+            put("currency", headline)
+            put("spentThisMonth", sumBy(context, "debit", monthStart, headline))
+            put("receivedThisMonth", sumBy(context, "credit", monthStart, headline))
+            put("spentTotal", sumBy(context, "debit", 0L, headline))
+            put("receivedTotal", sumBy(context, "credit", 0L, headline))
+            put("others", others)
         }.toString()
     }
 
     fun getMonthlyTotals(context: Context, months: Int): String {
+        val headline = headlineCurrency(db(context))
         val arr = JSONArray()
         val cal = Calendar.getInstance()
         for (i in months - 1 downTo 0) {
@@ -260,13 +293,86 @@ object SmsDb {
             arr.put(
                 JSONObject().apply {
                     put("month", monthKey)
-                    put("spent", sumBetween(context, "debit", start, end))
-                    put("received", sumBetween(context, "credit", start, end))
+                    put("spent", sumBetween(context, "debit", start, end, headline))
+                    put("received", sumBetween(context, "credit", start, end, headline))
                 }
             )
             cal.add(Calendar.MONTH, -1)
         }
         return arr.toString()
+    }
+
+    fun exportCsv(context: Context): String {
+        val c = db(context).query("transactions", null, null, null, null, null, "ts ASC")
+        val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val sb = StringBuilder()
+        sb.append("date,type,amount,currency,category,counterparty,sender,body,confident\n")
+        c.use {
+            while (c.moveToNext()) {
+                val row = listOf(
+                    dateFmt.format(Date(c.getLong(c.getColumnIndexOrThrow("ts")))),
+                    c.getString(c.getColumnIndexOrThrow("type")),
+                    c.getDouble(c.getColumnIndexOrThrow("amount")).toString(),
+                    c.getString(c.getColumnIndexOrThrow("currency")),
+                    c.getString(c.getColumnIndexOrThrow("category")),
+                    c.getString(c.getColumnIndexOrThrow("counterparty")),
+                    c.getString(c.getColumnIndexOrThrow("sender")),
+                    c.getString(c.getColumnIndexOrThrow("body")),
+                    if (c.getInt(c.getColumnIndexOrThrow("is_confident")) == 1) "yes" else "no"
+                )
+                sb.append(row.joinToString(",") { csvEscape(it) }).append('\n')
+            }
+        }
+
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val fileName = "money-tracker-export-$stamp.csv"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            if (uri == null) {
+                writeToAppFiles(context, fileName, sb.toString())
+            } else {
+                val stream = context.contentResolver.openOutputStream(uri)
+                if (stream == null) {
+                    writeToAppFiles(context, fileName, sb.toString())
+                } else {
+                    stream.use { it.write(sb.toString().toByteArray()) }
+                    "Downloads/$fileName"
+                }
+            }
+        } else {
+            writeToAppFiles(context, fileName, sb.toString())
+        }
+    }
+
+    private fun csvEscape(field: String?): String {
+        val s = field ?: ""
+        return if (s.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
+            "\"${s.replace("\"", "\"\"")}\""
+        } else {
+            s
+        }
+    }
+
+    private fun writeToAppFiles(context: Context, fileName: String, content: String): String {
+        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        val file = File(dir, fileName)
+        file.writeText(content)
+        return file.absolutePath
+    }
+
+    private fun headlineCurrency(database: SQLiteDatabase): String {
+        val c = database.rawQuery(
+            "SELECT currency FROM transactions WHERE currency != '' GROUP BY currency " +
+                "ORDER BY COUNT(*) DESC LIMIT 1",
+            null
+        )
+        c.use { if (it.moveToFirst()) return it.getString(0) }
+        return "KES"
     }
 
     private fun startOfMonth(time: Long): Long {
@@ -279,19 +385,30 @@ object SmsDb {
         return cal.timeInMillis
     }
 
-    private fun sumBy(context: Context, type: String, since: Long): Double {
-        val where = if (since > 0) "type = ? AND ts >= ?" else "type = ?"
-        val args = if (since > 0) arrayOf(type, since.toString()) else arrayOf(type)
+    private fun sumBy(context: Context, type: String, since: Long, currency: String): Double {
+        val where = if (since > 0) {
+            "type = ? AND currency = ? AND ts >= ?"
+        } else {
+            "type = ? AND currency = ?"
+        }
+        val args = if (since > 0) {
+            arrayOf(type, currency, since.toString())
+        } else {
+            arrayOf(type, currency)
+        }
         val c = db(context).rawQuery(
             "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE $where", args
         )
         c.use { it.moveToFirst(); return it.getDouble(0) }
     }
 
-    private fun sumBetween(context: Context, type: String, start: Long, end: Long): Double {
+    private fun sumBetween(
+        context: Context, type: String, start: Long, end: Long, currency: String
+    ): Double {
         val c = db(context).rawQuery(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE type = ? AND ts >= ? AND ts < ?",
-            arrayOf(type, start.toString(), end.toString())
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions " +
+                "WHERE type = ? AND currency = ? AND ts >= ? AND ts < ?",
+            arrayOf(type, currency, start.toString(), end.toString())
         )
         c.use { it.moveToFirst(); return it.getDouble(0) }
     }

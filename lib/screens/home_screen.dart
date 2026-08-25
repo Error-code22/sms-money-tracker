@@ -104,6 +104,25 @@ class _HomeScreenState extends State<HomeScreen> {
     return NumberFormat('#,##0.00').format(value);
   }
 
+  Future<void> _onMenuSelected(String value) async {
+    if (value != 'export') return;
+    try {
+      final path = await SmsService.exportCsv();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(path.isEmpty ? 'Export failed' : 'CSV saved to $path'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Export failed')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final needSetup = !_smsStatus.isGranted || !_batteryExempt;
@@ -122,6 +141,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.refresh),
+          ),
+          PopupMenuButton<String>(
+            onSelected: _onMenuSelected,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'export', child: Text('Export CSV')),
+            ],
           ),
         ],
       ),
@@ -212,6 +237,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final spent = _get('spentThisMonth');
     final received = _get('receivedThisMonth');
     final net = received - spent;
+    final currency = (_summary['currency'] as String?) ?? '';
+    final others = (_summary['others'] as List?) ?? const [];
 
     return Column(
       children: [
@@ -241,7 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
-            'Net this month: ${net >= 0 ? '+' : ''}${_fmtAmount(net)}',
+            'Net this month ($currency): ${net >= 0 ? '+' : ''}${_fmtAmount(net)}',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 15,
@@ -249,18 +276,68 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+        if (others.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildOtherCurrenciesCard(others),
+        ],
       ],
     );
   }
 
+  Widget _buildOtherCurrenciesCard(List others) {
+    final lines = others.map((o) {
+      final map = o as Map;
+      final cur = map['currency'] ?? '';
+      final count = map['count'] ?? 0;
+      final debit = (map['debit'] as num?)?.toDouble() ?? 0;
+      final credit = (map['credit'] as num?)?.toDouble() ?? 0;
+      return '$cur: $count tx · out ${_fmtAmount(debit)} · in ${_fmtAmount(credit)}';
+    }).join('\n');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFB74D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.warning_amber, size: 16, color: Color(0xFFE65100)),
+              SizedBox(width: 6),
+              Text(
+                'Other currencies excluded from totals above',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: Color(0xFFE65100),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(lines, style: const TextStyle(fontSize: 12, color: Colors.black87)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChartCard() {
+    final currency = (_summary['currency'] as String?) ?? '';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Last 6 months', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'Last 6 months ($currency)',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 4),
             Row(
               children: const [

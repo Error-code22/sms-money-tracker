@@ -64,6 +64,13 @@ class MainActivity : FlutterActivity() {
                             result.error("mark_failed", e.message, null)
                         }
                     }
+                    "exportCsv" -> {
+                        try {
+                            result.success(SmsDb.exportCsv(applicationContext))
+                        } catch (e: Exception) {
+                            result.error("export_failed", e.message, null)
+                        }
+                    }
                     "isBatteryExempt" -> {
                         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                         result.success(pm.isIgnoringBatteryOptimizations(packageName))
