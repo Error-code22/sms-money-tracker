@@ -24,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MoneyTransaction> _transactions = [];
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _monthlyTotals = [];
+  int _reviewCount = 0;
   Timer? _timer;
   final _searchController = TextEditingController();
 
@@ -75,11 +76,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final txs = await SmsService.getTransactions(filter: _filter, query: _query);
     final summary = await SmsService.getSummary();
     final totals = await SmsService.getMonthlyTotals(months: 6);
+    final review = await SmsService.getTransactions(filter: 'review');
     if (!mounted) return;
     setState(() {
       _transactions = txs.map(MoneyTransaction.fromJson).toList();
       _summary = summary;
       _monthlyTotals = totals;
+      _reviewCount = review.length;
     });
   }
 
@@ -129,6 +132,10 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             if (needSetup) _buildSetupCard(),
+            if (_reviewCount > 0 && _filter != 'review') ...[
+              const SizedBox(height: 8),
+              _buildReviewBanner(),
+            ],
             const SizedBox(height: 8),
             _buildSummary(),
             const SizedBox(height: 16),
@@ -139,6 +146,22 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildTransactionList(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildReviewBanner() {
+    return Card(
+      color: const Color(0xFFE3F2FD),
+      child: ListTile(
+        leading: const Icon(Icons.fact_check_outlined, color: Color(0xFF1565C0)),
+        title: Text('$_reviewCount messages need review'),
+        subtitle: const Text('Confirm they are money (or remove them) so the app learns your senders.'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {
+          setState(() => _filter = 'review');
+          _load();
+        },
       ),
     );
   }
@@ -277,6 +300,7 @@ class _HomeScreenState extends State<HomeScreen> {
             chip('all', 'All'),
             chip('debit', 'Money out'),
             chip('credit', 'Money in'),
+            chip('review', _reviewCount > 0 ? 'Review ($_reviewCount)' : 'Review'),
           ],
         ),
         const SizedBox(height: 8),
@@ -299,13 +323,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildTransactionList() {
     if (_transactions.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 40),
+      final inReview = _filter == 'review';
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
         child: Center(
           child: Text(
-            'No transactions found yet.\nPull down to sync, or wait for the next SMS.',
+            inReview
+                ? 'Nothing to review. You are all caught up.'
+                : 'No transactions found yet.\nPull down to sync, or wait for the next SMS.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.black54),
+            style: const TextStyle(color: Colors.black54),
           ),
         ),
       );
@@ -320,9 +347,31 @@ class _HomeScreenState extends State<HomeScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
         const SizedBox(height: 8),
-        ..._transactions.map((tx) => _TransactionTile(tx: tx, formatter: formatter)),
+        ..._transactions.map(
+          (tx) => _TransactionTile(
+            tx: tx,
+            formatter: formatter,
+            reviewMode: _filter == 'review',
+            onConfirm: () => _reviewAction(tx, confirm: true),
+            onNotMoney: () => _reviewAction(tx, confirm: false),
+          ),
+        ),
       ],
     );
+  }
+
+  Future<void> _reviewAction(MoneyTransaction tx, {required bool confirm}) async {
+    final result = confirm
+        ? await SmsService.confirmTransaction(tx.id)
+        : await SmsService.markNotMoney(tx.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(confirm ? 'Confirmed ($result similar messages updated)' : 'Removed as not money'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    await _load();
   }
 }
 
@@ -404,13 +453,25 @@ class _LegendDot extends StatelessWidget {
 class _TransactionTile extends StatelessWidget {
   final MoneyTransaction tx;
   final DateFormat formatter;
+  final bool reviewMode;
+  final VoidCallback onConfirm;
+  final VoidCallback onNotMoney;
 
-  const _TransactionTile({required this.tx, required this.formatter});
+  const _TransactionTile({
+    required this.tx,
+    required this.formatter,
+    required this.reviewMode,
+    required this.onConfirm,
+    required this.onNotMoney,
+  });
 
   @override
   Widget build(BuildContext context) {
     final color = tx.isDebit ? const Color(0xFFE53935) : const Color(0xFF43A047);
     final time = DateFormat('h:mm a').format(tx.date);
+    final extra = tx.extraInfo;
+    final subtitleText = '${formatter.format(tx.date)} $time\n${tx.subtitle}'
+        '${extra.isNotEmpty ? '\n$extra' : ''}';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -425,15 +486,31 @@ class _TransactionTile extends StatelessWidget {
         ),
         title: Text(tx.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '${formatter.format(tx.date)} $time\n${tx.subtitle}',
-          maxLines: 2,
+          subtitleText,
+          maxLines: extra.isNotEmpty ? 3 : 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12),
         ),
-        trailing: Text(
-          tx.formatAmount(),
-          style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14),
-        ),
+        trailing: reviewMode
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Confirm as money',
+                    onPressed: onConfirm,
+                    icon: const Icon(Icons.check_circle, color: Color(0xFF43A047)),
+                  ),
+                  IconButton(
+                    tooltip: 'Not money',
+                    onPressed: onNotMoney,
+                    icon: const Icon(Icons.cancel, color: Color(0xFFE53935)),
+                  ),
+                ],
+              )
+            : Text(
+                tx.formatAmount(),
+                style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14),
+              ),
         isThreeLine: true,
       ),
     );

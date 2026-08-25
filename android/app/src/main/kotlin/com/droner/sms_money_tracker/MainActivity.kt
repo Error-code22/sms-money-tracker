@@ -48,6 +48,22 @@ class MainActivity : FlutterActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "confirmTransaction" -> {
+                        val id = (call.argument<Number>("id") ?: 0).toLong()
+                        try {
+                            result.success(SmsDb.confirmTransaction(applicationContext, id))
+                        } catch (e: Exception) {
+                            result.error("confirm_failed", e.message, null)
+                        }
+                    }
+                    "markNotMoney" -> {
+                        val id = (call.argument<Number>("id") ?: 0).toLong()
+                        try {
+                            result.success(SmsDb.markNotMoney(applicationContext, id))
+                        } catch (e: Exception) {
+                            result.error("mark_failed", e.message, null)
+                        }
+                    }
                     "isBatteryExempt" -> {
                         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                         result.success(pm.isIgnoringBatteryOptimizations(packageName))

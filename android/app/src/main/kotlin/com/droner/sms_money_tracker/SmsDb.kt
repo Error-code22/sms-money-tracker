@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
-class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 1) {
+class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -21,14 +21,65 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
                 currency TEXT,
                 type TEXT NOT NULL,
                 counterparty TEXT,
-                ts INTEGER NOT NULL
+                ts INTEGER NOT NULL,
+                is_confident INTEGER NOT NULL DEFAULT 0,
+                category TEXT,
+                interest REAL,
+                shape TEXT
             )
             """.trimIndent()
         )
         db.execSQL("CREATE INDEX idx_ts ON transactions(ts)")
+        db.execSQL(
+            """
+            CREATE TABLE learned_shapes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender TEXT NOT NULL,
+                shape TEXT NOT NULL,
+                UNIQUE(sender, shape)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE rejected_shapes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender TEXT NOT NULL,
+                shape TEXT NOT NULL,
+                UNIQUE(sender, shape)
+            )
+            """.trimIndent()
+        )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN is_confident INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN category TEXT")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN interest REAL")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN shape TEXT")
+            db.execSQL(
+                """
+                CREATE TABLE learned_shapes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender TEXT NOT NULL,
+                    shape TEXT NOT NULL,
+                    UNIQUE(sender, shape)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE rejected_shapes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender TEXT NOT NULL,
+                    shape TEXT NOT NULL,
+                    UNIQUE(sender, shape)
+                )
+                """.trimIndent()
+            )
+        }
+    }
 }
 
 object SmsDb {
@@ -36,6 +87,13 @@ object SmsDb {
         SmsDbHelper(context.applicationContext).writableDatabase
 
     fun insert(context: Context, txn: Txn): Boolean {
+        val database = db(context)
+        val shape = SmsParser.shapeOf(txn.body)
+
+        if (isRejected(database, txn.sender, shape)) return false
+
+        val confident = txn.isConfident || isLearned(database, txn.sender, shape)
+
         val values = ContentValues().apply {
             put("sms_id", txn.smsId.toString())
             put("sender", txn.sender)
@@ -45,10 +103,88 @@ object SmsDb {
             put("type", txn.type)
             put("counterparty", txn.counterparty)
             put("ts", txn.ts)
+            put("is_confident", if (confident) 1 else 0)
+            put("category", txn.category)
+            put("interest", txn.interest)
+            put("shape", shape)
         }
-        return db(context).insertWithOnConflict(
+        return database.insertWithOnConflict(
             "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
         ) != -1L
+    }
+
+    fun confirmTransaction(context: Context, id: Long): Int {
+        val database = db(context)
+        val row = fetchSenderAndShape(database, id) ?: return 0
+
+        val learned = ContentValues().apply {
+            put("sender", row.first)
+            put("shape", row.second)
+        }
+        database.insertWithOnConflict(
+            "learned_shapes", null, learned, SQLiteDatabase.CONFLICT_IGNORE
+        )
+
+        val update = ContentValues().apply { put("is_confident", 1) }
+        return database.update(
+            "transactions", update,
+            "sender = ? AND shape = ?",
+            arrayOf(row.first, row.second)
+        )
+    }
+
+    fun markNotMoney(context: Context, id: Long): Int {
+        val database = db(context)
+        val row = fetchSenderAndShape(database, id) ?: return 0
+
+        val rejected = ContentValues().apply {
+            put("sender", row.first)
+            put("shape", row.second)
+        }
+        database.insertWithOnConflict(
+            "rejected_shapes", null, rejected, SQLiteDatabase.CONFLICT_IGNORE
+        )
+
+        return database.delete(
+            "transactions",
+            "sender = ? AND shape = ?",
+            arrayOf(row.first, row.second)
+        )
+    }
+
+    private fun fetchSenderAndShape(database: SQLiteDatabase, id: Long): Pair<String, String>? {
+        val c = database.query(
+            "transactions",
+            arrayOf("sender", "shape"),
+            "id = ?",
+            arrayOf(id.toString()),
+            null, null, null
+        )
+        c.use {
+            if (!it.moveToFirst()) return null
+            val sender = it.getString(0) ?: ""
+            val shape = it.getString(1) ?: ""
+            if (sender.isEmpty() || shape.isEmpty()) return null
+            return Pair(sender, shape)
+        }
+    }
+
+    private fun isLearned(database: SQLiteDatabase, sender: String, shape: String): Boolean {
+        val c = database.query(
+            "learned_shapes", arrayOf("id"),
+            "sender = ? AND shape = ?", arrayOf(sender, shape),
+            null, null, null, "1"
+        )
+        c.use { return it.moveToFirst() }
+    }
+
+    private fun isRejected(database: SQLiteDatabase, sender: String, shape: String): Boolean {
+        val c = database.query(
+            "rejected_shapes", arrayOf("id"),
+            "sender = ? AND shape = ?", arrayOf(sender, shape),
+            null, null, null, "1"
+        )
+        c.use { return it.moveToFirst() }
     }
 
     fun getTransactions(context: Context, filter: String, query: String): String {
@@ -57,6 +193,7 @@ object SmsDb {
         when (filter) {
             "debit" -> where.append(" AND type = 'debit'")
             "credit" -> where.append(" AND type = 'credit'")
+            "review" -> where.append(" AND is_confident = 0")
         }
         if (query.isNotBlank()) {
             where.append(" AND (body LIKE ? OR counterparty LIKE ? OR sender LIKE ?)")
@@ -88,6 +225,9 @@ object SmsDb {
                         put("type", c.getString(c.getColumnIndexOrThrow("type")))
                         put("counterparty", c.getString(c.getColumnIndexOrThrow("counterparty")) ?: "")
                         put("ts", c.getLong(c.getColumnIndexOrThrow("ts")))
+                        put("is_confident", c.getInt(c.getColumnIndexOrThrow("is_confident")))
+                        put("category", c.getString(c.getColumnIndexOrThrow("category")) ?: "")
+                        put("interest", if (c.isNull(c.getColumnIndexOrThrow("interest"))) JSONObject.NULL else c.getDouble(c.getColumnIndexOrThrow("interest")))
                     }
                 )
             }

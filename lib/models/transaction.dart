@@ -7,6 +7,9 @@ class MoneyTransaction {
   final String type;
   final String counterparty;
   final DateTime date;
+  final bool isConfident;
+  final String category;
+  final double? interest;
 
   MoneyTransaction.fromJson(Map<String, dynamic> json)
       : id = json['id'] as int,
@@ -16,7 +19,10 @@ class MoneyTransaction {
         currency = json['currency'] as String? ?? '',
         type = json['type'] as String,
         counterparty = json['counterparty'] as String? ?? '',
-        date = DateTime.fromMillisecondsSinceEpoch((json['ts'] as num).toInt());
+        date = DateTime.fromMillisecondsSinceEpoch((json['ts'] as num).toInt()),
+        isConfident = (json['is_confident'] as num? ?? 0) == 1,
+        category = json['category'] as String? ?? '',
+        interest = (json['interest'] as num?)?.toDouble();
 
   bool get isDebit => type == 'debit';
 
@@ -32,5 +38,14 @@ class MoneyTransaction {
     final sign = isDebit ? '-' : '+';
     final value = amount.toStringAsFixed(amount == amount.roundToDouble() ? 0 : 2);
     return currency.isEmpty ? '$sign$value' : '$sign$value $currency';
+  }
+
+  String get extraInfo {
+    final parts = <String>[];
+    if (category.isNotEmpty) parts.add('Category: $category');
+    if (interest != null && interest! > 0) {
+      parts.add('Interest: ${interest!.toStringAsFixed(2)} $currency');
+    }
+    return parts.join(' · ');
   }
 }

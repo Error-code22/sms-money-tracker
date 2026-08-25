@@ -37,6 +37,14 @@ class SmsService {
     return await _channel.invokeMethod<bool>('isBatteryExempt') ?? false;
   }
 
+  static Future<int> confirmTransaction(int id) async {
+    return await _channel.invokeMethod<int>('confirmTransaction', {'id': id}) ?? 0;
+  }
+
+  static Future<int> markNotMoney(int id) async {
+    return await _channel.invokeMethod<int>('markNotMoney', {'id': id}) ?? 0;
+  }
+
   static Future<void> requestBatteryExemption() async {
     await _channel.invokeMethod('requestBatteryExemption');
   }

@@ -9,10 +9,11 @@ Popular apps (like Truecaller) can't read SMS anymore because Google Play bans S
 ## Features
 
 - Reads SMS on-device via Android `ContentResolver` (no permissions leave the phone)
-- Parses mobile-money and bank SMS: M-Pesa style (`Ksh500.00 sent to JOHN DOE`), `NGN 5,000.00`, `UGX 50000`, etc.
-- Detects money in / money out, amount, currency, counterparty
+- **M-Pesa:** gated on sender `MPESA` + the `ABCD1234XY Confirmed.` header, then parsed with one dedicated template per transaction type (send, receive, paybill, till, withdraw, airtime, Fuliza, reversal) — amounts are anchored before `New M-PESA balance`/`Transaction cost,` so the wrong Ksh figure is never grabbed
+- **Everything else (banks, Airtel):** generic keyword fallback with a currency whitelist, marked unconfirmed
+- **Review queue:** unconfirmed transactions get one-tap *confirm* / *not money*; confirming teaches the app the sender + message shape, so identical messages are auto-confident from then on
 - Monthly summary (spent, received, net) + last-6-months chart
-- Search and filter (all / money out / money in)
+- Search and filter (all / money out / money in / review)
 - Background receiver: new SMS are captured in real time even when the app is closed
 - Battery-optimization exemption request so Tecno/HiOS can't kill it
 - 100% offline, SQLite storage
@@ -35,7 +36,7 @@ APK lands in `build/app/outputs/flutter-apk/app-release.apk`. Copy it to your ph
 
 ## How it works
 
-- **Native (Kotlin):** `SmsSync` queries `content://sms/inbox`; `SmsParser` extracts amounts/currency/direction with regex heuristics; `SmsDb` stores everything in SQLite; `SmsReceiver` catches `SMS_RECEIVED` broadcasts for real-time capture.
+- **Native (Kotlin):** `SmsSync` queries `content://sms/inbox`; `SmsParser` gates M-Pesa messages on the `MPESA` sender + transaction-code header and parses them with per-type templates, falling back to a whitelist-keyword parser for banks; `SmsDb` stores everything in SQLite (plus `learned_shapes`/`rejected_shapes` tables that make review decisions stick); `SmsReceiver` catches `SMS_RECEIVED` broadcasts for real-time capture.
 - **Dart/Flutter:** UI only — talks to native via a single MethodChannel (`sms_money_tracker/channel`).
 
 ## Privacy
