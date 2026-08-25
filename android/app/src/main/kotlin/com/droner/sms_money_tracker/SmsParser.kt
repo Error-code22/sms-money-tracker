@@ -59,7 +59,7 @@ object SmsParser {
     )
 
     // Generic fallback: currency whitelist only, never bare words.
-    private val currencyToken = "(?:KES|KSH|UGX|TZS|RWF|NGN|GHS|ETB|ZMW|MWK|ZAR|USD|EUR|GBP|R|[$€£₦])"
+    private val currencyToken = "(KES|KSH|UGX|TZS|RWF|NGN|GHS|ETB|ZMW|MWK|ZAR|USD|EUR|GBP|R|[$€£₦])"
     private val moneyPattern = Regex(
         "(?<![A-Za-z])$currencyToken\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)(?![0-9])",
         RegexOption.IGNORE_CASE

@@ -24,8 +24,12 @@ object SmsSync {
         }
         var added = 0
         for (sms in readSmsSince(context, since)) {
-            val txn = SmsParser.parse(sms)
-            if (txn != null && SmsDb.insert(context, txn)) added++
+            try {
+                val txn = SmsParser.parse(sms)
+                if (txn != null && SmsDb.insert(context, txn)) added++
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
         prefs.edit().putLong(KEY_LAST_SYNC, now).apply()
         return added
