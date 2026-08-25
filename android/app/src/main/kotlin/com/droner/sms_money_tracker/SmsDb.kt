@@ -83,8 +83,13 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
 }
 
 object SmsDb {
+    @Volatile
+    private var helper: SmsDbHelper? = null
+
     private fun db(context: Context): SQLiteDatabase =
-        SmsDbHelper(context.applicationContext).writableDatabase
+        (helper ?: synchronized(this) {
+            helper ?: SmsDbHelper(context.applicationContext).also { helper = it }
+        }).writableDatabase
 
     fun insert(context: Context, txn: Txn): Boolean {
         val database = db(context)
