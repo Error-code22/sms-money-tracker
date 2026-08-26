@@ -18,10 +18,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "sync" -> {
-                        try {
-                            result.success(SmsSync.sync(applicationContext))
-                        } catch (e: Exception) {
-                            result.error("sync_failed", e.message, null)
+                        syncExecutor.execute {
+                            var added = -1
+                            try {
+                                added = SmsSync.sync(applicationContext)
+                            } catch (e: Exception) {
+                                DebugLog.exception(applicationContext, "MainActivity", e)
+                            }
+                            val finalAdded = added
+                            runOnUiThread { result.success(finalAdded) }
                         }
                     }
                     "getTransactions" -> {
@@ -48,6 +53,14 @@ class MainActivity : FlutterActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "getTopCounterparties" -> {
+                        val months = call.argument<Int>("months") ?: 1
+                        try {
+                            result.success(SmsDb.getTopCounterparties(applicationContext, months))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
                     "confirmTransaction" -> {
                         val id = (call.argument<Number>("id") ?: 0).toLong()
                         try {
@@ -65,11 +78,55 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "resetSyncState" -> {
+                        syncExecutor.execute {
+                            var added = -1
+                            try {
+                                SmsSync.resetSyncState(applicationContext)
+                                added = SmsSync.sync(applicationContext)
+                            } catch (e: Exception) {
+                                DebugLog.exception(applicationContext, "MainActivity", e)
+                            }
+                            val finalAdded = added
+                            runOnUiThread { result.success(finalAdded) }
+                        }
+                    }
+                    "insertManual" -> {
+                        val type = call.argument<String>("type") ?: "debit"
+                        val amount = call.argument<Number>("amount")?.toDouble() ?: 0.0
+                        val currency = call.argument<String>("currency") ?: "KES"
+                        val category = call.argument<String>("category")?.takeIf { it.isNotBlank() }
+                        val counterparty = call.argument<String>("counterparty") ?: ""
+                        val ts = (call.argument<Number>("ts") ?: 0).toLong()
+                        val note = call.argument<String>("note") ?: ""
                         try {
-                            SmsSync.resetSyncState(applicationContext)
-                            result.success(null)
+                            result.success(
+                                SmsDb.insertManual(
+                                    applicationContext, type, amount, currency,
+                                    category, counterparty, ts, note
+                                )
+                            )
                         } catch (e: Exception) {
-                            result.error("reset_failed", e.message, null)
+                            result.error("insert_failed", e.message, null)
+                        }
+                    }
+                    "updateTransaction" -> {
+                        val id = (call.argument<Number>("id") ?: 0).toLong()
+                        val type = call.argument<String>("type") ?: "debit"
+                        val amount = call.argument<Number>("amount")?.toDouble() ?: 0.0
+                        val currency = call.argument<String>("currency") ?: "KES"
+                        val category = call.argument<String>("category")?.takeIf { it.isNotBlank() }
+                        val counterparty = call.argument<String>("counterparty") ?: ""
+                        val ts = (call.argument<Number>("ts") ?: 0).toLong()
+                        val note = call.argument<String>("note")
+                        try {
+                            result.success(
+                                SmsDb.updateTransaction(
+                                    applicationContext, id, type, amount, currency,
+                                    category, counterparty, ts, note
+                                )
+                            )
+                        } catch (e: Exception) {
+                            result.error("update_failed", e.message, null)
                         }
                     }
                     "exportCsv" -> {

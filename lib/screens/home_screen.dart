@@ -3,10 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../app_lock.dart';
+import '../dialogs.dart';
 import '../models/transaction.dart';
 import '../services/sms_service.dart';
 import '../widgets/monthly_chart.dart';
+import 'breakdown_screen.dart';
+import 'transaction_detail.dart';
+import 'transaction_form.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,6 +31,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _monthlyTotals = [];
   int _reviewCount = 0;
+  bool _lockEnabled = false;
+  bool _locked = false;
   Timer? _timer;
   final _searchController = TextEditingController();
 
@@ -33,9 +41,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _init();
+    _maybeShowOnboarding().then((_) => _initLockState());
     _timer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (_smsStatus.isGranted) _sync();
+      if (_smsStatus.isGranted && !_locked) _sync();
     });
+  }
+
+  Future<void> _maybeShowOnboarding() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(kOnboardingSeenKey) ?? false) return;
+      if (!mounted) return;
+      await showOnboardingDialog(context);
+    } catch (_) {}
+  }
+
+  Future<void> _initLockState() async {
+    try {
+      final enabled = await AppLock.isEnabled();
+      if (!mounted) return;
+      setState(() {
+        _lockEnabled = enabled;
+        _locked = enabled;
+      });
+      if (enabled) _promptUnlock();
+    } catch (_) {}
+  }
+
+  Future<void> _promptUnlock() async {
+    if (!_locked) return;
+    final ok = await showLockDialog(context);
+    if (mounted && ok) setState(() => _locked = false);
   }
 
   @override
@@ -48,7 +84,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _init();
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (_lockEnabled) _locked = true;
+    } else if (state == AppLifecycleState.resumed) {
+      _init();
+      if (_lockEnabled && _locked) _promptUnlock();
+    }
   }
 
   Future<void> _init() async {
@@ -99,31 +140,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (status.isGranted) {
       await _sync();
     } else if (status.isPermanentlyDenied && mounted) {
-      showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('SMS access is blocked'),
-          content: const Text(
-            'Android is no longer showing the permission prompt, so it must be enabled manually.\n\n'
-            'Open app settings and turn on SMS. If the options are greyed out, tap the '
-            '⋮ menu on the app-info screen and choose "Allow restricted settings" — '
-            'that is required for sideloaded apps on modern Android.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(context);
-                openAppSettings();
-              },
-              child: const Text('Open settings'),
-            ),
-          ],
-        ),
-      );
+      await showRestrictedSettingsHelp(context);
     }
   }
 
@@ -141,6 +158,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _onMenuSelected(String value) async {
     switch (value) {
+      case 'about':
+        await showAppAboutDialog(context);
+      case 'support':
+        await showSupportDialog(context);
+      case 'settings':
+        await showSettingsDialog(
+          context,
+          onChanged: () async {
+            try {
+              final enabled = await AppLock.isEnabled();
+              if (mounted) setState(() => _lockEnabled = enabled);
+            } catch (_) {}
+          },
+        );
       case 'export':
         try {
           final path = await SmsService.exportCsv();
@@ -158,16 +189,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           );
         }
       case 'resync':
+        if (_syncing) return;
+        setState(() => _syncing = true);
         try {
           await SmsService.resetSyncState();
-          await _sync();
+          await _load();
         } catch (_) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Resync failed')),
           );
+        } finally {
+          if (mounted) setState(() => _syncing = false);
         }
     }
+  }
+
+  Future<void> _addManual() async {
+    final currency = _summary['currency'] as String?;
+    final saved = await TransactionFormDialog.show(
+      context,
+      defaultCurrency: currency != null && currency.isNotEmpty ? currency : 'KES',
+    );
+    if (saved == true) await _load();
   }
 
   @override
@@ -189,14 +233,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   )
                 : const Icon(Icons.refresh),
           ),
+          IconButton(
+            tooltip: 'Where it goes',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BreakdownScreen()),
+            ),
+            icon: const Icon(Icons.bar_chart),
+          ),
           PopupMenuButton<String>(
             onSelected: _onMenuSelected,
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'export', child: Text('Export CSV')),
-              PopupMenuItem(value: 'resync', child: Text('Force full resync')),
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'about', child: Text('About')),
+              const PopupMenuItem(value: 'support', child: Text('Support')),
+              const PopupMenuItem(value: 'settings', child: Text('Settings')),
+              const PopupMenuItem(value: 'export', child: Text('Export CSV')),
+              PopupMenuItem(
+                value: 'resync',
+                enabled: !_syncing,
+                child: const Text('Force full resync'),
+              ),
             ],
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        tooltip: 'Add manual transaction',
+        onPressed: _addManual,
+        child: const Icon(Icons.add),
       ),
       body: SafeArea(
         bottom: true,
@@ -262,10 +326,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
             if (!smsGranted)
-              FilledButton.icon(
-                onPressed: _requestSmsPermission,
-                icon: const Icon(Icons.sms),
-                label: const Text('Allow SMS access'),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _requestSmsPermission,
+                      icon: const Icon(Icons.sms),
+                      label: const Text('Allow SMS access'),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Why can\'t I grant SMS access?',
+                    onPressed: () => showRestrictedSettingsHelp(context),
+                    icon: const Icon(Icons.help_outline),
+                  ),
+                ],
               ),
             if (_smsStatus.isPermanentlyDenied) ...[
               const SizedBox(height: 8),
@@ -510,6 +585,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             tx: tx,
             formatter: formatter,
             reviewMode: _filter == 'review',
+            onTap: () => showTransactionDetail(context, tx, onChanged: _load),
             onConfirm: () => _reviewAction(tx, confirm: true),
             onNotMoney: () => _reviewAction(tx, confirm: false),
           ),
@@ -615,6 +691,7 @@ class _TransactionTile extends StatelessWidget {
   final MoneyTransaction tx;
   final DateFormat formatter;
   final bool reviewMode;
+  final VoidCallback onTap;
   final VoidCallback onConfirm;
   final VoidCallback onNotMoney;
 
@@ -622,6 +699,7 @@ class _TransactionTile extends StatelessWidget {
     required this.tx,
     required this.formatter,
     required this.reviewMode,
+    required this.onTap,
     required this.onConfirm,
     required this.onNotMoney,
   });
@@ -637,6 +715,7 @@ class _TransactionTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: onTap,
         leading: CircleAvatar(
           backgroundColor: color.withValues(alpha: 0.12),
           child: Icon(

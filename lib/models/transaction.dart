@@ -10,6 +10,8 @@ class MoneyTransaction {
   final bool isConfident;
   final String category;
   final double? interest;
+  final String source;
+  final String note;
 
   MoneyTransaction.fromJson(Map<String, dynamic> json)
       : id = json['id'] as int,
@@ -22,7 +24,11 @@ class MoneyTransaction {
         date = DateTime.fromMillisecondsSinceEpoch((json['ts'] as num).toInt()),
         isConfident = (json['is_confident'] as num? ?? 0) == 1,
         category = json['category'] as String? ?? '',
-        interest = (json['interest'] as num?)?.toDouble();
+        interest = (json['interest'] as num?)?.toDouble(),
+        source = json['source'] as String? ?? 'sms',
+        note = json['note'] as String? ?? '';
+
+  bool get isManual => source == 'manual';
 
   bool get isDebit => type == 'debit';
 

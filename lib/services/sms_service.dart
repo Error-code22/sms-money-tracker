@@ -33,6 +33,54 @@ class SmsService {
     return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
+  static Future<List<Map<String, dynamic>>> getTopCounterparties({int months = 1}) async {
+    final raw = await _channel.invokeMethod<String>('getTopCounterparties', {'months': months});
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> insertManual({
+    required String type,
+    required double amount,
+    required String currency,
+    String? category,
+    required String counterparty,
+    required int ts,
+    required String note,
+  }) async {
+    await _channel.invokeMethod('insertManual', {
+      'type': type,
+      'amount': amount,
+      'currency': currency,
+      'category': category,
+      'counterparty': counterparty,
+      'ts': ts,
+      'note': note,
+    });
+  }
+
+  static Future<void> updateTransaction({
+    required int id,
+    required String type,
+    required double amount,
+    required String currency,
+    String? category,
+    required String counterparty,
+    required int ts,
+    String? note,
+  }) async {
+    await _channel.invokeMethod('updateTransaction', {
+      'id': id,
+      'type': type,
+      'amount': amount,
+      'currency': currency,
+      'category': category,
+      'counterparty': counterparty,
+      'ts': ts,
+      'note': note,
+    });
+  }
+
   static Future<bool> isBatteryExempt() async {
     return await _channel.invokeMethod<bool>('isBatteryExempt') ?? false;
   }
@@ -49,8 +97,8 @@ class SmsService {
     return await _channel.invokeMethod<String>('exportCsv') ?? '';
   }
 
-  static Future<void> resetSyncState() async {
-    await _channel.invokeMethod('resetSyncState');
+  static Future<int> resetSyncState() async {
+    return await _channel.invokeMethod<int>('resetSyncState') ?? 0;
   }
 
   static Future<void> requestBatteryExemption() async {

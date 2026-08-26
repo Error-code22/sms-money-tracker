@@ -7,8 +7,16 @@ import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 data class SmsMessage(val id: Long, val sender: String, val body: String, val date: Long)
+
+/**
+ * Single background thread shared by the MethodChannel handlers and the SMS
+ * receiver, so syncs are serialized and never run on the platform/UI thread.
+ */
+val syncExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
 object SmsSync {
     private const val PREFS = "sms_money_tracker_prefs"

@@ -14,8 +14,9 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
-class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 2) {
+class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -32,7 +33,9 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
                 is_confident INTEGER NOT NULL DEFAULT 0,
                 category TEXT,
                 interest REAL,
-                shape TEXT
+                shape TEXT,
+                source TEXT NOT NULL DEFAULT 'sms',
+                note TEXT
             )
             """.trimIndent()
         )
@@ -85,6 +88,10 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
                 )
                 """.trimIndent()
             )
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'sms'")
+            db.execSQL("ALTER TABLE transactions ADD COLUMN note TEXT")
         }
     }
 }
@@ -199,6 +206,92 @@ object SmsDb {
         c.use { return it.moveToFirst() }
     }
 
+    fun insertManual(
+        context: Context,
+        type: String,
+        amount: Double,
+        currency: String,
+        category: String?,
+        counterparty: String,
+        ts: Long,
+        note: String
+    ): Long {
+        val values = ContentValues().apply {
+            put("sms_id", "manual-${System.currentTimeMillis()}-${UUID.randomUUID()}")
+            put("sender", "")
+            put("body", note)
+            put("amount", amount)
+            put("currency", currency)
+            put("type", if (type == "credit") "credit" else "debit")
+            put("counterparty", counterparty)
+            put("ts", ts)
+            put("is_confident", 1)
+            if (category.isNullOrEmpty()) putNull("category") else put("category", category)
+            putNull("interest")
+            putNull("shape")
+            put("source", "manual")
+            put("note", note)
+        }
+        return db(context).insertWithOnConflict(
+            "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        )
+    }
+
+    fun updateTransaction(
+        context: Context,
+        id: Long,
+        type: String,
+        amount: Double,
+        currency: String,
+        category: String?,
+        counterparty: String,
+        ts: Long,
+        note: String?
+    ): Int {
+        val values = ContentValues().apply {
+            put("type", if (type == "credit") "credit" else "debit")
+            put("amount", amount)
+            put("currency", currency)
+            put("counterparty", counterparty)
+            put("ts", ts)
+            if (category.isNullOrEmpty()) putNull("category") else put("category", category)
+            if (note != null) {
+                put("note", note)
+                put("body", note)
+            }
+        }
+        return db(context).update("transactions", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    fun getTopCounterparties(context: Context, months: Int): String {
+        val since = if (months <= 0) {
+            0L
+        } else {
+            System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
+        }
+        val c = db(context).rawQuery(
+            "SELECT counterparty, currency, SUM(amount) AS total, COUNT(*) AS cnt " +
+                "FROM transactions WHERE type = 'debit' AND is_confident = 1 AND counterparty != '' " +
+                "AND (ts >= ? OR ? = 0) GROUP BY counterparty, currency " +
+                "ORDER BY total DESC LIMIT 10",
+            arrayOf(since.toString(), since.toString())
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(
+                    JSONObject().apply {
+                        put("counterparty", c.getString(0))
+                        put("currency", c.getString(1) ?: "")
+                        put("total", c.getDouble(2))
+                        put("count", c.getInt(3))
+                    }
+                )
+            }
+        }
+        return arr.toString()
+    }
+
     fun getTransactions(context: Context, filter: String, query: String): String {
         val where = StringBuilder("1=1")
         val args = mutableListOf<String>()
@@ -240,6 +333,8 @@ object SmsDb {
                         put("is_confident", c.getInt(c.getColumnIndexOrThrow("is_confident")))
                         put("category", c.getString(c.getColumnIndexOrThrow("category")) ?: "")
                         put("interest", if (c.isNull(c.getColumnIndexOrThrow("interest"))) JSONObject.NULL else c.getDouble(c.getColumnIndexOrThrow("interest")))
+                        put("source", c.getString(c.getColumnIndexOrThrow("source")) ?: "sms")
+                        put("note", c.getString(c.getColumnIndexOrThrow("note")) ?: "")
                     }
                 )
             }

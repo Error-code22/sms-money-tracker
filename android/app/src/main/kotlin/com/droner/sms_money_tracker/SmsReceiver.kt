@@ -11,14 +11,17 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
         val pendingResult = goAsync()
-        Handler(Looper.getMainLooper()).postDelayed({
+        syncExecutor.execute {
             try {
+                // Small delay so the SMS is committed to the content provider
+                // before we query it. Runs off the main thread.
+                Thread.sleep(3000)
                 SmsSync.sync(context)
             } catch (e: Exception) {
                 DebugLog.exception(context, "SmsReceiver", e)
             } finally {
-                pendingResult.finish()
+                Handler(Looper.getMainLooper()).post { pendingResult.finish() }
             }
-        }, 3000)
+        }
     }
 }
