@@ -15,7 +15,7 @@ class SmsReceiver : BroadcastReceiver() {
             try {
                 SmsSync.sync(context)
             } catch (e: Exception) {
-                e.printStackTrace()
+                DebugLog.exception(context, "SmsReceiver", e)
             } finally {
                 pendingResult.finish()
             }

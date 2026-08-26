@@ -28,7 +28,7 @@ object SmsSync {
                 val txn = SmsParser.parse(sms)
                 if (txn != null && SmsDb.insert(context, txn)) added++
             } catch (e: Exception) {
-                e.printStackTrace()
+                DebugLog.exception(context, "SmsSync", e)
             }
         }
         prefs.edit().putLong(KEY_LAST_SYNC, now).apply()
@@ -65,7 +65,7 @@ object SmsSync {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            DebugLog.exception(context, "SmsSync", e)
         } finally {
             cursor?.close()
         }
