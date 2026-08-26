@@ -1,9 +1,12 @@
 package com.droner.sms_money_tracker
 
+import android.Manifest
 import android.content.ContentResolver
 import android.content.Context
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 
 data class SmsMessage(val id: Long, val sender: String, val body: String, val date: Long)
 
@@ -14,6 +17,14 @@ object SmsSync {
     private const val FIRST_BACKFILL_DAYS = 90L
 
     fun sync(context: Context): Int {
+        // Never advance the sync window without SMS access: pre-permission
+        // syncs must not stamp lastSync and collapse the future backfill.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return 0
+        }
+
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val lastSync = prefs.getLong(KEY_LAST_SYNC, 0L)
         val now = System.currentTimeMillis()
@@ -33,6 +44,11 @@ object SmsSync {
         }
         prefs.edit().putLong(KEY_LAST_SYNC, now).apply()
         return added
+    }
+
+    fun resetSyncState(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_LAST_SYNC, 0L).apply()
     }
 
     private fun readSmsSince(context: Context, since: Long): List<SmsMessage> {

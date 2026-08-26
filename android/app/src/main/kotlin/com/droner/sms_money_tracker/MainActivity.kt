@@ -64,6 +64,14 @@ class MainActivity : FlutterActivity() {
                             result.error("mark_failed", e.message, null)
                         }
                     }
+                    "resetSyncState" -> {
+                        try {
+                            SmsSync.resetSyncState(applicationContext)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("reset_failed", e.message, null)
+                        }
+                    }
                     "exportCsv" -> {
                         try {
                             result.success(SmsDb.exportCsv(applicationContext))

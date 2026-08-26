@@ -49,6 +49,10 @@ class SmsService {
     return await _channel.invokeMethod<String>('exportCsv') ?? '';
   }
 
+  static Future<void> resetSyncState() async {
+    await _channel.invokeMethod('resetSyncState');
+  }
+
   static Future<void> requestBatteryExemption() async {
     await _channel.invokeMethod('requestBatteryExemption');
   }

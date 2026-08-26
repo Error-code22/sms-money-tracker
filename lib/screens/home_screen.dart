@@ -15,7 +15,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   PermissionStatus _smsStatus = PermissionStatus.denied;
   bool _batteryExempt = false;
   bool _syncing = false;
@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
     _timer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (_smsStatus.isGranted) _sync();
@@ -39,9 +40,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _init();
   }
 
   Future<void> _init() async {
@@ -89,7 +96,35 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _requestSmsPermission() async {
     final status = await Permission.sms.request();
     setState(() => _smsStatus = status);
-    if (status.isGranted) await _sync();
+    if (status.isGranted) {
+      await _sync();
+    } else if (status.isPermanentlyDenied && mounted) {
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('SMS access is blocked'),
+          content: const Text(
+            'Android is no longer showing the permission prompt, so it must be enabled manually.\n\n'
+            'Open app settings and turn on SMS. If the options are greyed out, tap the '
+            '⋮ menu on the app-info screen and choose "Allow restricted settings" — '
+            'that is required for sideloaded apps on modern Android.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              child: const Text('Open settings'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Future<void> _requestBatteryExemption() async {
@@ -105,21 +140,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _onMenuSelected(String value) async {
-    if (value != 'export') return;
-    try {
-      final path = await SmsService.exportCsv();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(path.isEmpty ? 'Export failed' : 'CSV saved to $path'),
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Export failed')),
-      );
+    switch (value) {
+      case 'export':
+        try {
+          final path = await SmsService.exportCsv();
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(path.isEmpty ? 'Export failed' : 'CSV saved to $path'),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } catch (_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Export failed')),
+          );
+        }
+      case 'resync':
+        try {
+          await SmsService.resetSyncState();
+          await _sync();
+        } catch (_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Resync failed')),
+          );
+        }
     }
   }
 
@@ -146,40 +193,45 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelected: _onMenuSelected,
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'export', child: Text('Export CSV')),
+              PopupMenuItem(value: 'resync', child: Text('Force full resync')),
             ],
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _sync,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (needSetup) _buildSetupCard(),
-            if (_reviewCount > 0 && _filter != 'review') ...[
+      body: SafeArea(
+        bottom: true,
+        child: RefreshIndicator(
+          onRefresh: _sync,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (needSetup) _buildSetupCard(),
+              if (_reviewCount > 0 && _filter != 'review') ...[
+                const SizedBox(height: 8),
+                _buildReviewBanner(),
+              ],
               const SizedBox(height: 8),
-              _buildReviewBanner(),
+              _buildSummary(),
+              const SizedBox(height: 16),
+              _buildChartCard(),
+              const SizedBox(height: 16),
+              _buildFilters(),
+              const SizedBox(height: 8),
+              _buildTransactionList(),
             ],
-            const SizedBox(height: 8),
-            _buildSummary(),
-            const SizedBox(height: 16),
-            _buildChartCard(),
-            const SizedBox(height: 16),
-            _buildFilters(),
-            const SizedBox(height: 8),
-            _buildTransactionList(),
-          ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildReviewBanner() {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
-      color: const Color(0xFFE3F2FD),
+      color: scheme.primaryContainer,
       child: ListTile(
-        leading: const Icon(Icons.fact_check_outlined, color: Color(0xFF1565C0)),
+        leading: Icon(Icons.fact_check_outlined, color: scheme.primary),
         title: Text('$_reviewCount messages need review'),
         subtitle: const Text('Confirm they are money (or remove them) so the app learns your senders.'),
         trailing: const Icon(Icons.chevron_right),
@@ -194,7 +246,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildSetupCard() {
     final smsGranted = _smsStatus.isGranted;
     return Card(
-      color: const Color(0xFFFFF8E1),
+      color: Theme.of(context).colorScheme.tertiaryContainer,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -215,6 +267,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.sms),
                 label: const Text('Allow SMS access'),
               ),
+            if (_smsStatus.isPermanentlyDenied) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: openAppSettings,
+                icon: const Icon(Icons.settings),
+                label: const Text('Open app settings'),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'If SMS is greyed out there, tap the ⋮ menu on the app-info screen and choose "Allow restricted settings".',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
             if (!smsGranted && !_batteryExempt) const SizedBox(height: 8),
             if (!_batteryExempt)
               OutlinedButton.icon(
@@ -260,22 +325,30 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-          decoration: BoxDecoration(
-            color: net >= 0 ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            'Net this month ($currency): ${net >= 0 ? '+' : ''}${_fmtAmount(net)}',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-              color: net >= 0 ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+        Builder(builder: (context) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          final positive = net >= 0;
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            decoration: BoxDecoration(
+              color: positive
+                  ? (isDark ? const Color(0xFF1B3B24) : const Color(0xFFE8F5E9))
+                  : (isDark ? const Color(0xFF4A1E1E) : const Color(0xFFFFEBEE)),
+              borderRadius: BorderRadius.circular(12),
             ),
-          ),
-        ),
+            child: Text(
+              'Net this month ($currency): ${positive ? '+' : ''}${_fmtAmount(net)}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: positive
+                    ? (isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32))
+                    : (isDark ? const Color(0xFFE57373) : const Color(0xFFC62828)),
+              ),
+            ),
+          );
+        }),
         if (others.isNotEmpty) ...[
           const SizedBox(height: 12),
           _buildOtherCurrenciesCard(others),
@@ -294,33 +367,41 @@ class _HomeScreenState extends State<HomeScreen> {
       return '$cur: $count tx · out ${_fmtAmount(debit)} · in ${_fmtAmount(credit)}';
     }).join('\n');
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF3E2A14) : const Color(0xFFFFF3E0);
+    final border = isDark ? const Color(0xFFB26A00) : const Color(0xFFFFB74D);
+    final titleColor = isDark ? const Color(0xFFFFB74D) : const Color(0xFFE65100);
+    final bodyColor = isDark ? const Color(0xFFFFE0B2) : Colors.black87;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF3E0),
+        color: bg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFFB74D)),
+        border: Border.all(color: border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.warning_amber, size: 16, color: Color(0xFFE65100)),
-              SizedBox(width: 6),
-              Text(
-                'Other currencies excluded from totals above',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  color: Color(0xFFE65100),
+              Icon(Icons.warning_amber, size: 16, color: titleColor),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Other currencies excluded from totals above',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: titleColor,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(lines, style: const TextStyle(fontSize: 12, color: Colors.black87)),
+          Text(lines, style: TextStyle(fontSize: 12, color: bodyColor)),
         ],
       ),
     );
@@ -409,7 +490,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? 'Nothing to review. You are all caught up.'
                 : 'No transactions found yet.\nPull down to sync, or wait for the next SMS.',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.black54),
+            style: TextStyle(color: Theme.of(context).hintColor),
           ),
         ),
       );
@@ -521,7 +602,10 @@ class _LegendDot extends StatelessWidget {
           decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
         ),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+        ),
       ],
     );
   }

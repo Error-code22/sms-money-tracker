@@ -13,7 +13,7 @@ class MonthlyChart extends StatelessWidget {
       height: 160,
       child: CustomPaint(
         size: Size.infinite,
-        painter: _ChartPainter(totals),
+        painter: _ChartPainter(totals, Theme.of(context).hintColor),
       ),
     );
   }
@@ -21,8 +21,9 @@ class MonthlyChart extends StatelessWidget {
 
 class _ChartPainter extends CustomPainter {
   final List<Map<String, dynamic>> totals;
+  final Color labelColor;
 
-  _ChartPainter(this.totals);
+  _ChartPainter(this.totals, this.labelColor);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -41,7 +42,7 @@ class _ChartPainter extends CustomPainter {
 
     final spentPaint = Paint()..color = const Color(0xFFE53935);
     final receivedPaint = Paint()..color = const Color(0xFF43A047);
-    final labelStyle = const TextStyle(fontSize: 10, color: Colors.black54);
+    final labelStyle = TextStyle(fontSize: 10, color: labelColor);
 
     for (var i = 0; i < totals.length; i++) {
       final t = totals[i];
@@ -81,5 +82,5 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter oldDelegate) =>
-      oldDelegate.totals != totals;
+      oldDelegate.totals != totals || oldDelegate.labelColor != labelColor;
 }
