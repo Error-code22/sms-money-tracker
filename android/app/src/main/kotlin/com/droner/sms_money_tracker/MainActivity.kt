@@ -26,11 +26,16 @@ class MainActivity : FlutterFragmentActivity() {
         // Blank the recents/overview preview and block screenshots of
         // financial data (banking-app behaviour).
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            "weekly_digest",
-            ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<DigestWorker>(12, TimeUnit.HOURS).build()
-        )
+        // Never let a scheduler problem take the whole app down.
+        try {
+            WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+                "weekly_digest",
+                ExistingPeriodicWorkPolicy.KEEP,
+                PeriodicWorkRequestBuilder<DigestWorker>(12, TimeUnit.HOURS).build()
+            )
+        } catch (e: Exception) {
+            DebugLog.exception(applicationContext, "MainActivity", e)
+        }
     }
 
     private var pendingImportResult: MethodChannel.Result? = null

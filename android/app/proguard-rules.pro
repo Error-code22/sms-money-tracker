@@ -7,3 +7,10 @@
 # org.json is used by the DB layer; it ships with the platform but keep it
 # explicit so R8 never rewrites the constructors we rely on.
 -keep class org.json.** { *; }
+
+# WorkManager (weekly digest) starts up via androidx.startup's
+# InitializationProvider at app launch and instantiates workers by
+# reflection. Stripping any of these classes crashes the app on open.
+-keep class androidx.work.** { *; }
+-keep class androidx.startup.** { *; }
+-keep class kotlinx.coroutines.** { *; }
