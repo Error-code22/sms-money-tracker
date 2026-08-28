@@ -1,5 +1,7 @@
 # Where Ma Money?
 
+[![Download APK](https://img.shields.io/badge/Download-APK-brightgreen)](https://github.com/Error-code22/sms-money-tracker/releases/latest)
+
 A local, offline Android app that reads transaction SMS (M-Pesa, mobile money, bank alerts) directly from your phone, parses them, and shows where your money goes. **No backend, no cloud — everything stays on your device.**
 
 ## Why this exists
