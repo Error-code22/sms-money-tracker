@@ -248,6 +248,8 @@ object SmsDb {
         ts: Long,
         note: String?
     ): Int {
+        val database = db(context)
+        val isManual = isManualRow(database, id)
         val values = ContentValues().apply {
             put("type", if (type == "credit") "credit" else "debit")
             put("amount", amount)
@@ -257,10 +259,21 @@ object SmsDb {
             if (category.isNullOrEmpty()) putNull("category") else put("category", category)
             if (note != null) {
                 put("note", note)
-                put("body", note)
+                // Only manual entries have their note as the display body.
+                // Never overwrite an SMS message body with a note.
+                if (isManual) put("body", note)
             }
         }
-        return db(context).update("transactions", values, "id = ?", arrayOf(id.toString()))
+        return database.update("transactions", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    private fun isManualRow(database: SQLiteDatabase, id: Long): Boolean {
+        val c = database.query(
+            "transactions", arrayOf("source"),
+            "id = ?", arrayOf(id.toString()),
+            null, null, null, "1"
+        )
+        c.use { return it.moveToFirst() && it.getString(0) == "manual" }
     }
 
     fun setNote(context: Context, id: Long, note: String?): Int {
@@ -326,26 +339,53 @@ object SmsDb {
         val arr = JSONArray()
         c.use {
             while (c.moveToNext()) {
-                arr.put(
-                    JSONObject().apply {
-                        put("id", c.getLong(c.getColumnIndexOrThrow("id")))
-                        put("sender", c.getString(c.getColumnIndexOrThrow("sender")) ?: "")
-                        put("body", c.getString(c.getColumnIndexOrThrow("body")) ?: "")
-                        put("amount", c.getDouble(c.getColumnIndexOrThrow("amount")))
-                        put("currency", c.getString(c.getColumnIndexOrThrow("currency")) ?: "")
-                        put("type", c.getString(c.getColumnIndexOrThrow("type")))
-                        put("counterparty", c.getString(c.getColumnIndexOrThrow("counterparty")) ?: "")
-                        put("ts", c.getLong(c.getColumnIndexOrThrow("ts")))
-                        put("is_confident", c.getInt(c.getColumnIndexOrThrow("is_confident")))
-                        put("category", c.getString(c.getColumnIndexOrThrow("category")) ?: "")
-                        put("interest", if (c.isNull(c.getColumnIndexOrThrow("interest"))) JSONObject.NULL else c.getDouble(c.getColumnIndexOrThrow("interest")))
-                        put("source", c.getString(c.getColumnIndexOrThrow("source")) ?: "sms")
-                        put("note", c.getString(c.getColumnIndexOrThrow("note")) ?: "")
-                    }
-                )
+                arr.put(rowToJson(c))
             }
         }
         return arr.toString()
+    }
+
+    fun getCounterpartyTransactions(context: Context, counterparty: String, months: Int): String {
+        val since = if (months <= 0) {
+            0L
+        } else {
+            System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
+        }
+        val c = db(context).query(
+            "transactions",
+            null,
+            "counterparty = ? AND type = 'debit' AND is_confident = 1 AND (ts >= ? OR ? = 0)",
+            arrayOf(counterparty, since.toString(), since.toString()),
+            null,
+            null,
+            "ts DESC",
+            "500"
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(rowToJson(c))
+            }
+        }
+        return arr.toString()
+    }
+
+    private fun rowToJson(c: android.database.Cursor): JSONObject {
+        return JSONObject().apply {
+            put("id", c.getLong(c.getColumnIndexOrThrow("id")))
+            put("sender", c.getString(c.getColumnIndexOrThrow("sender")) ?: "")
+            put("body", c.getString(c.getColumnIndexOrThrow("body")) ?: "")
+            put("amount", c.getDouble(c.getColumnIndexOrThrow("amount")))
+            put("currency", c.getString(c.getColumnIndexOrThrow("currency")) ?: "")
+            put("type", c.getString(c.getColumnIndexOrThrow("type")))
+            put("counterparty", c.getString(c.getColumnIndexOrThrow("counterparty")) ?: "")
+            put("ts", c.getLong(c.getColumnIndexOrThrow("ts")))
+            put("is_confident", c.getInt(c.getColumnIndexOrThrow("is_confident")))
+            put("category", c.getString(c.getColumnIndexOrThrow("category")) ?: "")
+            put("interest", if (c.isNull(c.getColumnIndexOrThrow("interest"))) JSONObject.NULL else c.getDouble(c.getColumnIndexOrThrow("interest")))
+            put("source", c.getString(c.getColumnIndexOrThrow("source")) ?: "sms")
+            put("note", c.getString(c.getColumnIndexOrThrow("note")) ?: "")
+        }
     }
 
     fun getSummary(context: Context): String {

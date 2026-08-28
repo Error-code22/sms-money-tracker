@@ -167,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       HapticFeedback.vibrate();
       await showNotesPrompt(context, fresh);
+      await _load();
     } catch (_) {}
   }
 

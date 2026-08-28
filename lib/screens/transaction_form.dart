@@ -29,8 +29,7 @@ class TransactionFormDialog extends StatefulWidget {
 
 class _TransactionFormDialogState extends State<TransactionFormDialog> {
   late String _type;
-  late DateTime _dateTime;
-  late final TextEditingController _amount;
+  late DateTime _dateTime;  late final TextEditingController _amount;
   late final TextEditingController _currency;
   late final TextEditingController _category;
   late final TextEditingController _counterparty;
@@ -69,9 +68,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     _note.dispose();
     super.dispose();
   }
-
-  bool get _showNote => widget.initial == null || widget.initial!.isManual;
-
   Future<void> _pickDate() async {
     final date = await showDatePicker(
       context: context,
@@ -126,7 +122,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
           category: _category.text.trim().isEmpty ? null : _category.text.trim(),
           counterparty: _counterparty.text.trim(),
           ts: _dateTime.millisecondsSinceEpoch,
-          note: _showNote ? _note.text.trim() : null,
+          note: _note.text.trim(),
         );
       }
       if (mounted) Navigator.pop(context, true);
@@ -184,13 +180,15 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
               trailing: const Icon(Icons.edit_calendar),
               onTap: _pickDate,
             ),
-            if (_showNote)
-              TextField(
-                controller: _note,
-                maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Note'),
+            TextField(
+              controller: _note,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: widget.initial != null && !widget.initial!.isManual
+                    ? 'Note / what was it for?'
+                    : 'Note',
               ),
-          ],
+            ),          ],
         ),
       ),
       actions: [

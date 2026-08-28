@@ -89,9 +89,14 @@ Future<LockResult?> showLockScreen(BuildContext context) async {
   bool canBiometric = false;
   try {
     final auth = LocalAuthentication();
-    if (await auth.isDeviceSupported()) {
+    final supported = await auth.isDeviceSupported();
+    if (supported) {
       final biometrics = await auth.getAvailableBiometrics();
       canBiometric = biometrics.isNotEmpty && await auth.canCheckBiometrics;
+    } else {
+      // Some phones (HiOS/Tecno) misreport hardware support; if biometrics
+      // are actually enrolled, canCheckBiometrics still returns true.
+      canBiometric = await auth.canCheckBiometrics;
     }
   } catch (_) {}
 
@@ -147,6 +152,9 @@ class _LockScreenState extends State<LockScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
+      // Give the activity a moment to fully resume before showing the
+      // fingerprint prompt (some launchers fail if called instantly).
+      await Future.delayed(const Duration(milliseconds: 300));
       final auth = LocalAuthentication();
       final ok = await auth.authenticate(
         localizedReason: 'Unlock Where Ma Money?',
@@ -217,7 +225,9 @@ class _LockScreenState extends State<LockScreen> {
                       ),
                     if (_biometricFailed)
                       Text(
-                        'Biometrics unavailable — use your PIN',
+                        'Biometrics failed or none are enrolled. Enroll a fingerprint '
+                        'in your phone\'s system Settings (Security → Fingerprint), '
+                        'or use your PIN.',
                         style: TextStyle(
                           color: scheme.onSurfaceVariant,
                           fontSize: 12,
@@ -360,7 +370,10 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('App lock'),
-              subtitle: const Text('Require PIN or biometrics to open the app'),
+              subtitle: const Text(
+                'Require PIN or biometrics to open the app. Biometrics use '
+                'fingerprints enrolled in your phone\'s system Settings.',
+              ),
               value: enabled,
               onChanged: (value) async {
                 if (value && !hasPin) {

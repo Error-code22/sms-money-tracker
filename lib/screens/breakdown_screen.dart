@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/sms_service.dart';
+import 'counterparty_screen.dart';
 
 class BreakdownScreen extends StatefulWidget {
   const BreakdownScreen({super.key});
@@ -81,6 +82,15 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                             return Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => CounterpartyScreen(
+                                      counterparty: counterparty,
+                                      months: _months,
+                                    ),
+                                  ),
+                                ),
                                 leading: CircleAvatar(
                                   child: Text('${index + 1}'),
                                 ),

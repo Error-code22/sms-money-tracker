@@ -80,6 +80,17 @@ class MainActivity : FlutterActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "getCounterpartyTransactions" -> {
+                        val counterparty = call.argument<String>("counterparty") ?: ""
+                        val months = call.argument<Int>("months") ?: 1
+                        try {
+                            result.success(
+                                SmsDb.getCounterpartyTransactions(applicationContext, counterparty, months)
+                            )
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
                     "confirmTransaction" -> {
                         val id = (call.argument<Number>("id") ?: 0).toLong()
                         try {

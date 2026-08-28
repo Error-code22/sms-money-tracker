@@ -39,6 +39,18 @@ class SmsService {
     return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
+  static Future<List<Map<String, dynamic>>> getCounterpartyTransactions({
+    required String counterparty,
+    int months = 1,
+  }) async {
+    final raw = await _channel.invokeMethod<String>('getCounterpartyTransactions', {
+      'counterparty': counterparty,
+      'months': months,
+    });
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<void> insertManual({
     required String type,
     required double amount,

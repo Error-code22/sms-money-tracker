@@ -25,29 +25,31 @@ class AiAdvisor {
   }
 
   /// Sends only notes/amounts/types of the last 30 days to Groq. Returns the
-  /// advice text, or null when the request fails (bad key, offline, etc).
-  static Future<String?> ask({required String key}) async {
-    try {
-      final all = await SmsService.getTransactions();
-      final cutoff =
-          DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch;
-      final data = all
-          .where((t) =>
-              (t['is_confident'] as num? ?? 0) == 1 &&
-              (t['ts'] as num) > cutoff)
-          .map((t) => {
-                'date': DateTime.fromMillisecondsSinceEpoch((t['ts'] as num).toInt())
-                    .toIso8601String()
-                    .substring(0, 10),
-                'type': t['type'],
-                'amount': t['amount'],
-                'currency': t['currency'] ?? '',
-                'note': t['note'] ?? '',
-              })
-          .toList();
-      if (data.isEmpty) return 'Not enough transaction data yet.';
+  /// advice text. Throws an [Exception] with a user-readable message when
+  /// the request fails.
+  static Future<String> ask({required String key}) async {
+    final all = await SmsService.getTransactions();
+    final cutoff =
+        DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch;
+    final data = all
+        .where((t) => (t['is_confident'] as num? ?? 0) == 1 && (t['ts'] as num) > cutoff)
+        .map((t) => {
+              'date': DateTime.fromMillisecondsSinceEpoch((t['ts'] as num).toInt())
+                  .toIso8601String()
+                  .substring(0, 10),
+              'type': t['type'],
+              'amount': t['amount'],
+              'currency': t['currency'] ?? '',
+              'note': t['note'] ?? '',
+            })
+        .toList();
+    if (data.isEmpty) {
+      throw Exception('Not enough transaction data yet.');
+    }
 
-      final res = await http
+    late final http.Response res;
+    try {
+      res = await http
           .post(
             Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
             headers: {
@@ -75,14 +77,43 @@ class AiAdvisor {
             }),
           )
           .timeout(const Duration(seconds: 30));
-      if (res.statusCode != 200) return null;
+    } catch (_) {
+      throw Exception('Network error — check your connection and try again.');
+    }
+
+    if (res.statusCode == 200) {
       final json = jsonDecode(res.body) as Map<String, dynamic>;
       final choices = json['choices'] as List?;
-      if (choices == null || choices.isEmpty) return null;
-      final message = (choices.first as Map)['message'] as Map?;
-      return message?['content'] as String?;
-    } catch (_) {
-      return null;
+      final message = (choices != null && choices.isNotEmpty)
+          ? (choices.first as Map)['message'] as Map?
+          : null;
+      final content = message?['content'] as String?;
+      if (content != null && content.isNotEmpty) return content;
+      throw Exception('Groq returned an empty response — try again.');
+    }
+
+    var detail = '';
+    try {
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      final error = json['error'] as Map?;
+      detail = (error?['message'] as String?) ?? '';
+    } catch (_) {}
+
+    switch (res.statusCode) {
+      case 401:
+        throw Exception('Invalid API key — check you copied the full gsk_... key.');
+      case 429:
+        throw Exception('Groq rate limit — wait a minute and try again.');
+      case 400:
+        throw Exception(
+          detail.isNotEmpty ? 'Groq rejected the request: $detail' : 'Groq rejected the request (400).',
+        );
+      case 404:
+        throw Exception(
+          detail.isNotEmpty ? 'Groq: $detail' : 'Groq endpoint or model not found (404).',
+        );
+      default:
+        throw Exception('Groq error (${res.statusCode})${detail.isNotEmpty ? ': $detail' : ''}.');
     }
   }
 }
@@ -106,15 +137,21 @@ Future<void> showAiAdvisorDialog(BuildContext context) async {
             error = null;
             response = null;
           });
-          final result = await AiAdvisor.ask(key: controller.text.trim());
+          String result;
+          try {
+            result = await AiAdvisor.ask(key: controller.text.trim());
+          } catch (e) {
+            if (!dialogContext.mounted) return;
+            setState(() {
+              busy = false;
+              error = e.toString().replaceFirst('Exception: ', '');
+            });
+            return;
+          }
           if (!dialogContext.mounted) return;
           setState(() {
             busy = false;
-            if (result == null) {
-              error = "Couldn't reach Groq — check your API key and connection.";
-            } else {
-              response = result;
-            }
+            response = result;
           });
         }
 
