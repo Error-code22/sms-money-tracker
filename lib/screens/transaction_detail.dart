@@ -47,6 +47,7 @@ Future<void> showTransactionDetail(
               ),
             _field(context, 'Status', tx.isConfident ? 'Confirmed' : 'Needs review'),
             if (tx.isManual) _field(context, 'Source', 'Manual entry'),
+            if (tx.note.isNotEmpty && !tx.isManual) _field(context, 'Note', tx.note),
             const SizedBox(height: 8),
             Text(
               tx.isManual ? 'Note' : 'Message',

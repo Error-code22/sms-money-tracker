@@ -97,6 +97,10 @@ class SmsService {
     return await _channel.invokeMethod<String>('exportCsv') ?? '';
   }
 
+  static Future<int> setNote(int id, String note) async {
+    return await _channel.invokeMethod<int>('setNote', {'id': id, 'note': note}) ?? 0;
+  }
+
   static Future<int> resetSyncState() async {
     return await _channel.invokeMethod<int>('resetSyncState') ?? 0;
   }

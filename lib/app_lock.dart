@@ -6,10 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'ai_advisor.dart';
+
 class AppLock {
   static const _enabledKey = 'lock_enabled';
   static const _saltKey = 'pin_salt';
   static const _hashKey = 'pin_hash';
+  static const _duressSaltKey = 'duress_salt';
+  static const _duressHashKey = 'duress_hash';
 
   static Future<bool> isEnabled() async {
     final prefs = await SharedPreferences.getInstance();
@@ -30,11 +34,7 @@ class AppLock {
 
   static Future<void> setPin(String pin) async {
     final prefs = await SharedPreferences.getInstance();
-    final rng = Random.secure();
-    final salt = List.generate(
-      16,
-      (_) => rng.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join();
+    final salt = _randomSalt();
     final hash = sha256.convert(utf8.encode('$salt:$pin')).toString();
     await prefs.setString(_saltKey, salt);
     await prefs.setString(_hashKey, hash);
@@ -42,44 +42,83 @@ class AppLock {
 
   static Future<bool> verifyPin(String pin) async {
     final prefs = await SharedPreferences.getInstance();
-    final salt = prefs.getString(_saltKey);
-    final hash = prefs.getString(_hashKey);
+    return _matches(prefs.getString(_saltKey), prefs.getString(_hashKey), pin);
+  }
+
+  static Future<bool> hasDuressPin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final salt = prefs.getString(_duressSaltKey);
+    final hash = prefs.getString(_duressHashKey);
+    return salt != null && salt.isNotEmpty && hash != null && hash.isNotEmpty;
+  }
+
+  static Future<void> setDuressPin(String pin) async {
+    final prefs = await SharedPreferences.getInstance();
+    final salt = _randomSalt();
+    final hash = sha256.convert(utf8.encode('$salt:$pin')).toString();
+    await prefs.setString(_duressSaltKey, salt);
+    await prefs.setString(_duressHashKey, hash);
+  }
+
+  static Future<bool> verifyDuressPin(String pin) async {
+    final prefs = await SharedPreferences.getInstance();
+    return _matches(prefs.getString(_duressSaltKey), prefs.getString(_duressHashKey), pin);
+  }
+
+  static String _randomSalt() {
+    final rng = Random.secure();
+    return List.generate(
+      16,
+      (_) => rng.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
+
+  static bool _matches(String? salt, String? hash, String pin) {
     if (salt == null || hash == null) return false;
     final computed = sha256.convert(utf8.encode('$salt:$pin')).toString();
     return computed == hash;
   }
 }
 
-/// Full-screen-blocking unlock prompt. Cannot be dismissed without a correct
-/// PIN or successful biometric auth.
-Future<bool> showLockDialog(BuildContext context) async {
+enum LockResult { unlocked, duress }
+
+/// Full-screen opaque lock screen. Nothing is visible behind it, it cannot
+/// be dismissed without a correct PIN or successful biometric auth, and the
+/// window itself is FLAG_SECURE so recents shows a blank card.
+Future<LockResult?> showLockScreen(BuildContext context) async {
   bool canBiometric = false;
   try {
-    canBiometric = await LocalAuthentication().canCheckBiometrics;
+    final auth = LocalAuthentication();
+    if (await auth.isDeviceSupported()) {
+      final biometrics = await auth.getAvailableBiometrics();
+      canBiometric = biometrics.isNotEmpty && await auth.canCheckBiometrics;
+    }
   } catch (_) {}
 
-  if (!context.mounted) return false;
+  if (!context.mounted) return null;
 
-  return await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => _LockDialog(canBiometric: canBiometric),
-      ) ??
-      false;
+  return Navigator.of(context).push<LockResult>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => LockScreen(canBiometric: canBiometric),
+    ),
+  );
 }
 
-class _LockDialog extends StatefulWidget {
-  const _LockDialog({required this.canBiometric});
+class LockScreen extends StatefulWidget {
+  const LockScreen({super.key, required this.canBiometric});
 
   final bool canBiometric;
 
   @override
-  State<_LockDialog> createState() => _LockDialogState();
+  State<LockScreen> createState() => _LockScreenState();
 }
 
-class _LockDialogState extends State<_LockDialog> {
+class _LockScreenState extends State<LockScreen> {
   final _controller = TextEditingController();
   String? _error;
+  bool _busy = false;
+  bool _biometricFailed = false;
 
   @override
   void dispose() {
@@ -88,73 +127,135 @@ class _LockDialogState extends State<_LockDialog> {
   }
 
   Future<void> _tryPin() async {
-    final valid = await AppLock.verifyPin(_controller.text);
+    final pin = _controller.text;
+    final isDuress = await AppLock.hasDuressPin() && await AppLock.verifyDuressPin(pin);
+    final isMain = await AppLock.verifyPin(pin);
     if (!mounted) return;
-    if (valid) {
-      Navigator.pop(context, true);
+    if (isDuress) {
+      Navigator.pop(context, LockResult.duress);
+    } else if (isMain) {
+      Navigator.pop(context, LockResult.unlocked);
     } else {
-      setState(() => _error = 'Wrong PIN');
+      setState(() {
+        _error = 'Wrong PIN';
+        _controller.clear();
+      });
     }
   }
 
   Future<void> _tryBiometric() async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
-      final ok = await LocalAuthentication().authenticate(
+      final auth = LocalAuthentication();
+      final ok = await auth.authenticate(
         localizedReason: 'Unlock Where Ma Money?',
-        options: const AuthenticationOptions(biometricOnly: true),
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
       );
-      if (ok && mounted) Navigator.pop(context, true);
-    } catch (_) {}
+      if (!mounted) return;
+      if (ok) {
+        Navigator.pop(context, LockResult.unlocked);
+      } else {
+        setState(() => _biometricFailed = true);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _biometricFailed = true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return PopScope(
       canPop: false,
-      child: AlertDialog(
-        title: const Text('Locked'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter your PIN to unlock'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              obscureText: true,
-              keyboardType: TextInputType.number,
-              maxLength: 8,
-              onChanged: (_) {
-                if (_error != null) setState(() => _error = null);
-              },
-              onSubmitted: (_) => _tryPin(),
-            ),
-            if (_error != null)
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+      child: Scaffold(
+        backgroundColor: scheme.surface,
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.lock_outline, size: 48, color: scheme.primary),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Where Ma Money?',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('Enter your PIN to unlock'),
+                    const SizedBox(height: 24),
+                    TextField(
+                      controller: _controller,
+                      autofocus: true,
+                      obscureText: true,
+                      textAlign: TextAlign.center,
+                      keyboardType: TextInputType.number,
+                      maxLength: 8,
+                      onChanged: (_) {
+                        if (_error != null || _biometricFailed) {
+                          setState(() {
+                            _error = null;
+                            _biometricFailed = false;
+                          });
+                        }
+                      },
+                      onSubmitted: (_) => _tryPin(),
+                    ),
+                    if (_error != null)
+                      Text(
+                        _error!,
+                        style: TextStyle(color: scheme.error),
+                      ),
+                    if (_biometricFailed)
+                      Text(
+                        'Biometrics unavailable — use your PIN',
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _tryPin,
+                        child: const Text('Unlock'),
+                      ),
+                    ),
+                    if (widget.canBiometric) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _busy ? null : _tryBiometric,
+                          icon: const Icon(Icons.fingerprint),
+                          label: const Text('Biometrics'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-          ],
-        ),
-        actions: [
-          if (widget.canBiometric)
-            FilledButton.icon(
-              onPressed: _tryBiometric,
-              icon: const Icon(Icons.fingerprint),
-              label: const Text('Biometrics'),
             ),
-          FilledButton(
-            onPressed: _tryPin,
-            child: const Text('Unlock'),
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
 /// Set/change PIN flow. Returns true if a PIN was stored.
-Future<bool> showPinSetupDialog(BuildContext context) async {
+/// With [duress] it sets the secondary PIN that opens the decoy dashboard.
+Future<bool> showPinSetupDialog(BuildContext context, {bool duress = false}) async {
   final first = TextEditingController();
   final second = TextEditingController();
   String? error;
@@ -163,10 +264,18 @@ Future<bool> showPinSetupDialog(BuildContext context) async {
         context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
-            title: const Text('Set PIN'),
+            title: Text(duress ? 'Set duress PIN' : 'Set PIN'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (duress)
+                  Text(
+                    'This PIN opens a decoy empty dashboard. Keep it different from your real PIN.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).hintColor,
+                    ),
+                  ),
                 TextField(
                   controller: first,
                   autofocus: true,
@@ -205,9 +314,24 @@ Future<bool> showPinSetupDialog(BuildContext context) async {
                     setState(() => error = 'PINs do not match');
                     return;
                   }
-                  try {
-                    await AppLock.setPin(pin);
-                  } catch (_) {}
+                  if (duress) {
+                    final hasMain = await AppLock.hasPin();
+                    if (!hasMain) {
+                      setState(() => error = 'Set your main PIN first');
+                      return;
+                    }
+                    if (await AppLock.verifyPin(pin)) {
+                      setState(() => error = 'Duress PIN must differ from your real PIN');
+                      return;
+                    }
+                    try {
+                      await AppLock.setDuressPin(pin);
+                    } catch (_) {}
+                  } else {
+                    try {
+                      await AppLock.setPin(pin);
+                    } catch (_) {}
+                  }
                   if (dialogContext.mounted) Navigator.pop(dialogContext, true);
                 },
                 child: const Text('Save'),
@@ -219,7 +343,7 @@ Future<bool> showPinSetupDialog(BuildContext context) async {
       false;
 }
 
-/// Settings entry: app lock toggle + set/change PIN.
+/// Settings entry: app lock toggle + set/change PIN + duress PIN + AI advisor.
 Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onChanged}) async {
   bool enabled = await AppLock.isEnabled();
   bool hasPin = await AppLock.hasPin();
@@ -256,6 +380,24 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
               },
               icon: const Icon(Icons.pin),
               label: Text(enabled ? 'Change PIN' : 'Set PIN'),
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.visibility_off),
+              title: const Text('Duress PIN'),
+              subtitle: const Text('A second PIN that opens a decoy empty dashboard'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => showPinSetupDialog(dialogContext, duress: true),
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.auto_awesome),
+              title: const Text('AI advisor'),
+              subtitle: const Text('Optional — uses your own Groq API key'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => showAiAdvisorDialog(dialogContext),
             ),
           ],
         ),

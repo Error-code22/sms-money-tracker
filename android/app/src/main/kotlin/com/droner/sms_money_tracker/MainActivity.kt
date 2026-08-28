@@ -3,14 +3,33 @@ package com.droner.sms_money_tracker
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val channelName = "sms_money_tracker/channel"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Blank the recents/overview preview and block screenshots of
+        // financial data (banking-app behaviour).
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppForegroundState.isForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AppForegroundState.isForeground = false
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -75,6 +94,15 @@ class MainActivity : FlutterActivity() {
                             result.success(SmsDb.markNotMoney(applicationContext, id))
                         } catch (e: Exception) {
                             result.error("mark_failed", e.message, null)
+                        }
+                    }
+                    "setNote" -> {
+                        val id = (call.argument<Number>("id") ?: 0).toLong()
+                        val note = call.argument<String>("note")
+                        try {
+                            result.success(SmsDb.setNote(applicationContext, id, note))
+                        } catch (e: Exception) {
+                            result.error("set_note_failed", e.message, null)
                         }
                     }
                     "resetSyncState" -> {

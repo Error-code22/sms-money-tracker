@@ -263,6 +263,12 @@ object SmsDb {
         return db(context).update("transactions", values, "id = ?", arrayOf(id.toString()))
     }
 
+    fun setNote(context: Context, id: Long, note: String?): Int {
+        val values = ContentValues()
+        if (note.isNullOrEmpty()) values.putNull("note") else values.put("note", note)
+        return db(context).update("transactions", values, "id = ?", arrayOf(id.toString()))
+    }
+
     fun getTopCounterparties(context: Context, months: Int): String {
         val since = if (months <= 0) {
             0L

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +12,7 @@ import '../models/transaction.dart';
 import '../services/sms_service.dart';
 import '../widgets/monthly_chart.dart';
 import 'breakdown_screen.dart';
+import 'note_prompt.dart';
 import 'transaction_detail.dart';
 import 'transaction_form.dart';
 
@@ -33,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _reviewCount = 0;
   bool _lockEnabled = false;
   bool _locked = false;
+  bool _duress = false;
   Timer? _timer;
   final _searchController = TextEditingController();
 
@@ -70,8 +73,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _promptUnlock() async {
     if (!_locked) return;
-    final ok = await showLockDialog(context);
-    if (mounted && ok) setState(() => _locked = false);
+    final result = await showLockScreen(context);
+    if (!mounted) return;
+    if (result == LockResult.unlocked) {
+      setState(() {
+        _locked = false;
+        _duress = false;
+      });
+    } else if (result == LockResult.duress) {
+      setState(() {
+        _locked = false;
+        _duress = true;
+      });
+    }
   }
 
   @override
@@ -101,11 +115,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       exempt = await SmsService.isBatteryExempt();
     } catch (_) {}
+    _askNotificationPermissionOnce();
     setState(() {
       _smsStatus = status;
       _batteryExempt = exempt;
     });
     if (status.isGranted) await _sync();
+  }
+
+  Future<void> _askNotificationPermissionOnce() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('asked_notif_perm') == true) return;
+      await prefs.setBool('asked_notif_perm', true);
+      await Permission.notification.request();
+    } catch (_) {}
   }
 
   Future<void> _sync() async {
@@ -114,10 +138,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       await SmsService.sync();
       await _load();
+      await _maybePromptNotes();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  /// After a sync, nudge the user to note fresh transactions before they
+  /// forget. Skips the initial 90-day backfill (first run) and stays silent
+  /// while locked or in duress mode.
+  Future<void> _maybePromptNotes() async {
+    if (_locked || _duress) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = prefs.getInt('last_note_prompt_ts');
+      if (last == null) {
+        await prefs.setInt('last_note_prompt_ts', DateTime.now().millisecondsSinceEpoch);
+        return;
+      }
+      final all = await SmsService.getTransactions();
+      final fresh = all
+          .where((t) => (t['ts'] as num) > last && (t['source'] as String? ?? 'sms') == 'sms')
+          .map(MoneyTransaction.fromJson)
+          .toList();
+      if (fresh.isEmpty) return;
+      await prefs.setInt('last_note_prompt_ts', DateTime.now().millisecondsSinceEpoch);
+      if (!mounted) return;
+      HapticFeedback.vibrate();
+      await showNotesPrompt(context, fresh);
+    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -214,8 +264,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (saved == true) await _load();
   }
 
+  /// Decoy dashboard shown after unlocking with the duress PIN. Shows no real
+  /// data. Long-pressing the title re-locks the app (normal PIN exits).
+  Widget _buildDecoy() {
+    return Scaffold(
+      appBar: AppBar(
+        title: GestureDetector(
+          onLongPress: () {
+            setState(() {
+              _duress = false;
+              _locked = true;
+            });
+            _promptUnlock();
+          },
+          child: const Text('Where Ma Money?'),
+        ),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.receipt_long_outlined,
+                size: 48,
+                color: Theme.of(context).hintColor,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No transactions yet.\nPull down to sync.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Theme.of(context).hintColor),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_duress) return _buildDecoy();
     final needSetup = !_smsStatus.isGranted || !_batteryExempt;
 
     return Scaffold(
@@ -709,8 +800,9 @@ class _TransactionTile extends StatelessWidget {
     final color = tx.isDebit ? const Color(0xFFE53935) : const Color(0xFF43A047);
     final time = DateFormat('h:mm a').format(tx.date);
     final extra = tx.extraInfo;
+    final noteLine = tx.note.isNotEmpty ? '\nNote: ${tx.note}' : '';
     final subtitleText = '${formatter.format(tx.date)} $time\n${tx.subtitle}'
-        '${extra.isNotEmpty ? '\n$extra' : ''}';
+        '${extra.isNotEmpty ? '\n$extra' : ''}$noteLine';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -727,7 +819,7 @@ class _TransactionTile extends StatelessWidget {
         title: Text(tx.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
           subtitleText,
-          maxLines: extra.isNotEmpty ? 3 : 2,
+          maxLines: extra.isNotEmpty || noteLine.isNotEmpty ? 4 : 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12),
         ),

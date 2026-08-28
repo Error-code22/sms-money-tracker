@@ -72,6 +72,7 @@ Future<void> showPrivacyDialog(BuildContext context) {
               'Your data stays on your phone. Full stop.\n\n'
               'Where Ma Money? reads your SMS on your device, figures out which ones are M-Pesa/bank transactions, and stores everything in a local database — nothing gets uploaded, backed up to a server, or sent anywhere.\n\n'
               'The only thing that ever leaves your phone is a single check against GitHub to see if a newer version of the app exists — that\'s just a version number, no SMS content, no amounts, no names, nothing personal.\n\n'
+              'The optional AI advisor is off by default. If you enable it with your own Groq API key, only your own notes, amounts and transaction types are sent to Groq — never your SMS — and only when you tap "Get advice".\n\n'
               'Your database can ride along with your regular Android backup (Settings → Backup) — that\'s Google\'s standard phone backup, not something this app sends anywhere on its own.\n\n'
               'This app is open source. If you don\'t believe any of this, the code\'s right there.',
             ),
