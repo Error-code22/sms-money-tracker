@@ -36,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _lockEnabled = false;
   bool _locked = false;
   bool _duress = false;
+  int _lockGrace = 30;
+  DateTime? _backgroundedAt;
   Timer? _timer;
   final _searchController = TextEditingController();
 
@@ -62,9 +64,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _initLockState() async {
     try {
       final enabled = await AppLock.isEnabled();
+      final grace = await AppLock.lockGraceSeconds();
       if (!mounted) return;
       setState(() {
         _lockEnabled = enabled;
+        _lockGrace = grace;
         _locked = enabled;
       });
       if (enabled) _promptUnlock();
@@ -99,10 +103,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      if (_lockEnabled) _locked = true;
+      if (_lockEnabled) _backgroundedAt ??= DateTime.now();
     } else if (state == AppLifecycleState.resumed) {
       _init();
-      if (_lockEnabled && _locked) _promptUnlock();
+      if (_lockEnabled) {
+        final now = DateTime.now();
+        final elapsed = _backgroundedAt == null
+            ? const Duration(days: 1)
+            : now.difference(_backgroundedAt!);
+        final grace = Duration(seconds: _lockGrace);
+        if (_locked || elapsed > grace) {
+          _locked = true;
+          _promptUnlock();
+        }
+        _backgroundedAt = null;
+      }
     }
   }
 
@@ -219,7 +234,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onChanged: () async {
             try {
               final enabled = await AppLock.isEnabled();
-              if (mounted) setState(() => _lockEnabled = enabled);
+              final grace = await AppLock.lockGraceSeconds();
+              if (mounted) {
+                setState(() {
+                  _lockEnabled = enabled;
+                  _lockGrace = grace;
+                });
+              }
             } catch (_) {}
           },
         );

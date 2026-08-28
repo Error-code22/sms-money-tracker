@@ -15,6 +15,7 @@ class AppLock {
   static const _hashKey = 'pin_hash';
   static const _duressSaltKey = 'duress_salt';
   static const _duressHashKey = 'duress_hash';
+  static const _graceKey = 'lock_grace_seconds';
 
   static Future<bool> isEnabled() async {
     final prefs = await SharedPreferences.getInstance();
@@ -24,6 +25,18 @@ class AppLock {
   static Future<void> setEnabled(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_enabledKey, value);
+  }
+
+  /// Seconds the app may stay in the background before re-locking.
+  /// 0 = instant lock on every resume.
+  static Future<int> lockGraceSeconds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_graceKey) ?? 30;
+  }
+
+  static Future<void> setLockGraceSeconds(int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_graceKey, value);
   }
 
   static Future<bool> hasPin() async {
@@ -369,6 +382,7 @@ Future<bool> showPinSetupDialog(BuildContext context, {bool duress = false}) asy
 Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onChanged}) async {
   bool enabled = await AppLock.isEnabled();
   bool hasPin = await AppLock.hasPin();
+  int grace = await AppLock.lockGraceSeconds();
   if (!context.mounted) return;
 
   showDialog<void>(
@@ -376,55 +390,78 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: const Text('Settings'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('App lock'),
-              subtitle: const Text(
-                'Require PIN or biometrics to open the app. Biometrics use '
-                'fingerprints enrolled in your phone\'s system Settings.',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('App lock'),
+                subtitle: const Text(
+                  'Require PIN or biometrics to open the app. Biometrics use '
+                  'fingerprints enrolled in your phone\'s system Settings.',
+                ),
+                value: enabled,
+                onChanged: (value) async {
+                  if (value && !hasPin) {
+                    final ok = await showPinSetupDialog(dialogContext);
+                    if (ok != true) return;
+                    hasPin = true;
+                  }
+                  await AppLock.setEnabled(value);
+                  setState(() => enabled = value);
+                  onChanged();
+                },
               ),
-              value: enabled,
-              onChanged: (value) async {
-                if (value && !hasPin) {
+              if (enabled)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Lock after'),
+                  subtitle: const Text('How long the app can stay in the background before re-locking'),
+                ),
+              if (enabled)
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('Instant')),
+                    ButtonSegment(value: 30, label: Text('30 sec')),
+                    ButtonSegment(value: 120, label: Text('2 min')),
+                  ],
+                  selected: {grace},
+                  onSelectionChanged: (selection) async {
+                    await AppLock.setLockGraceSeconds(selection.first);
+                    setState(() => grace = selection.first);
+                    onChanged();
+                  },
+                ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
                   final ok = await showPinSetupDialog(dialogContext);
-                  if (ok != true) return;
-                  hasPin = true;
-                }
-                await AppLock.setEnabled(value);
-                setState(() => enabled = value);
-                onChanged();
-              },
-            ),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final ok = await showPinSetupDialog(dialogContext);
-                if (ok == true) setState(() => hasPin = true);
-              },
-              icon: const Icon(Icons.pin),
-              label: Text(enabled ? 'Change PIN' : 'Set PIN'),
-            ),
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.visibility_off),
-              title: const Text('Duress PIN'),
-              subtitle: const Text('A second PIN that opens a decoy empty dashboard'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => showPinSetupDialog(dialogContext, duress: true),
-            ),
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.auto_awesome),
-              title: const Text('AI advisor'),
-              subtitle: const Text('Optional — uses your own Groq API key'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => showAiAdvisorDialog(dialogContext),
-            ),
-          ],
+                  if (ok == true) setState(() => hasPin = true);
+                },
+                icon: const Icon(Icons.pin),
+                label: Text(enabled ? 'Change PIN' : 'Set PIN'),
+              ),
+              const Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.visibility_off),
+                title: const Text('Duress PIN'),
+                subtitle: const Text('A second PIN that opens a decoy empty dashboard'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showPinSetupDialog(dialogContext, duress: true),
+              ),
+              const Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.auto_awesome),
+                title: const Text('AI advisor'),
+                subtitle: const Text('Optional — uses your own Groq API key'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showAiAdvisorDialog(dialogContext),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(

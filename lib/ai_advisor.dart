@@ -24,33 +24,46 @@ class AiAdvisor {
     await prefs.remove(_keyPref);
   }
 
-  static const List<String> _preferredModels = [
-    'llama-4-scout-17b-16e-instruct',
-    'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
-  ];
-
-  /// Asks Groq which models are currently active and picks the first
-  /// preferred one, so a deprecated model never bricks the advisor.
+  /// Asks Groq which models are active for this key and picks one
+  /// dynamically (preferring qwen, then llama), so deprecations or
+  /// tier-restricted models can never break the advisor.
   static Future<String> _pickModel(String key) async {
+    late final http.Response res;
     try {
-      final res = await http.get(
+      res = await http.get(
         Uri.parse('https://api.groq.com/openai/v1/models'),
         headers: {'Authorization': 'Bearer $key'},
       ).timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200) {
-        final json = jsonDecode(res.body) as Map<String, dynamic>;
-        final ids = (json['data'] as List? ?? [])
-            .where((m) => (m as Map)['active'] == true)
-            .map((m) => (m as Map)['id'] as String?)
-            .whereType<String>()
-            .toList();
-        for (final candidate in _preferredModels) {
-          if (ids.contains(candidate)) return candidate;
-        }
-      }
-    } catch (_) {}
-    return _preferredModels.first;
+    } catch (_) {
+      throw Exception('Network error — check your connection and try again.');
+    }
+    if (res.statusCode == 401) {
+      throw Exception('Invalid API key — check you copied the full gsk_... key.');
+    }
+    if (res.statusCode != 200) {
+      throw Exception('Could not reach Groq to pick a model (${res.statusCode}).');
+    }
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    final ids = (json['data'] as List? ?? [])
+        .whereType<Map>()
+        .where((m) => m['active'] == true)
+        .map((m) => m['id'] as String?)
+        .whereType<String>()
+        .where((id) =>
+            !id.contains('whisper') &&
+            !id.contains('tts') &&
+            !id.contains('embed'))
+        .toList();
+    if (ids.isEmpty) {
+      throw Exception('Groq returned no active models for this key.');
+    }
+    return ids.firstWhere(
+      (id) => id.contains('qwen'),
+      orElse: () => ids.firstWhere(
+        (id) => id.contains('llama'),
+        orElse: () => ids.first,
+      ),
+    );
   }
 
   /// Sends only notes/amounts/types of the last 30 days to Groq. Returns the
