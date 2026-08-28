@@ -1,5 +1,6 @@
 package com.droner.sms_money_tracker
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -7,9 +8,13 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.TimeUnit
 
 // FlutterFragmentActivity (not FlutterActivity) so the local_auth plugin's
 // BiometricPrompt has a FragmentActivity host.
@@ -21,6 +26,35 @@ class MainActivity : FlutterFragmentActivity() {
         // Blank the recents/overview preview and block screenshots of
         // financial data (banking-app behaviour).
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "weekly_digest",
+            ExistingPeriodicWorkPolicy.KEEP,
+            PeriodicWorkRequestBuilder<DigestWorker>(12, TimeUnit.HOURS).build()
+        )
+    }
+
+    private var pendingImportResult: MethodChannel.Result? = null
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMPORT_CSV) return
+        val result = pendingImportResult ?: return
+        pendingImportResult = null
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            result.success(0)
+            return
+        }
+        try {
+            val uri: Uri = data.data!!
+            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+            result.success(SmsDb.importCsv(applicationContext, text))
+        } catch (e: Exception) {
+            result.error("import_failed", e.message, null)
+        }
+    }
+
+    companion object {
+        private const val REQUEST_IMPORT_CSV = 1001
     }
 
     override fun onResume() {
@@ -93,6 +127,25 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "getTopCategories" -> {
+                        val months = call.argument<Int>("months") ?: 1
+                        try {
+                            result.success(SmsDb.getTopCategories(applicationContext, months))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
+                    "getCategoryTransactions" -> {
+                        val category = call.argument<String>("category") ?: ""
+                        val months = call.argument<Int>("months") ?: 1
+                        try {
+                            result.success(
+                                SmsDb.getCategoryTransactions(applicationContext, category, months)
+                            )
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
                     "confirmTransaction" -> {
                         val id = (call.argument<Number>("id") ?: 0).toLong()
                         try {
@@ -112,10 +165,28 @@ class MainActivity : FlutterFragmentActivity() {
                     "setNote" -> {
                         val id = (call.argument<Number>("id") ?: 0).toLong()
                         val note = call.argument<String>("note")
+                        val category = call.argument<String>("category")
                         try {
-                            result.success(SmsDb.setNote(applicationContext, id, note))
+                            result.success(SmsDb.setNote(applicationContext, id, note, category))
                         } catch (e: Exception) {
                             result.error("set_note_failed", e.message, null)
+                        }
+                    }
+                    "importCsv" -> {
+                        pendingImportResult = result
+                        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "text/*"
+                            putExtra(
+                                Intent.EXTRA_MIME_TYPES,
+                                arrayOf("text/csv", "text/comma-separated-values", "text/plain")
+                            )
+                        }
+                        try {
+                            startActivityForResult(intent, REQUEST_IMPORT_CSV)
+                        } catch (e: Exception) {
+                            pendingImportResult = null
+                            result.error("import_failed", e.message, null)
                         }
                     }
                     "resetSyncState" -> {

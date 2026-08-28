@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 
 class MonthlyChart extends StatelessWidget {
   final List<Map<String, dynamic>> totals;
+  final Color netColor;
 
-  const MonthlyChart({super.key, required this.totals});
+  const MonthlyChart({super.key, required this.totals, required this.netColor});
 
   @override
   Widget build(BuildContext context) {
@@ -13,7 +14,7 @@ class MonthlyChart extends StatelessWidget {
       height: 160,
       child: CustomPaint(
         size: Size.infinite,
-        painter: _ChartPainter(totals, Theme.of(context).hintColor),
+        painter: _ChartPainter(totals, Theme.of(context).hintColor, netColor),
       ),
     );
   }
@@ -22,8 +23,9 @@ class MonthlyChart extends StatelessWidget {
 class _ChartPainter extends CustomPainter {
   final List<Map<String, dynamic>> totals;
   final Color labelColor;
+  final Color netColor;
 
-  _ChartPainter(this.totals, this.labelColor);
+  _ChartPainter(this.totals, this.labelColor, this.netColor);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -86,9 +88,40 @@ class _ChartPainter extends CustomPainter {
         Offset(centerX - tp.width / 2, size.height - bottomPad + 4),
       );
     }
+
+    // Net line (received - spent) per month, drawn over the bars.
+    final netValues = totals
+        .map((t) => (t['received'] as num).toDouble() - (t['spent'] as num).toDouble())
+        .toList();
+    final foldedNet =
+        netValues.fold(0.0, (m, v) => math.max(m, v.abs()));
+    final maxAbsNet = foldedNet == 0 ? 1.0 : foldedNet;
+    final netPaint = Paint()
+      ..color = netColor
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final dotPaint = Paint()..color = netColor;
+    final points = <Offset>[];
+    for (var i = 0; i < netValues.length; i++) {
+      final x = groupWidth * i + groupWidth / 2;
+      final y = topPad + chartHeight / 2 - (netValues[i] / maxAbsNet) * (chartHeight / 2);
+      points.add(Offset(x, y));
+    }
+    if (points.length > 1) {
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final p in points.skip(1)) {
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(path, netPaint);
+    }
+    for (final p in points) {
+      canvas.drawCircle(p, 3, dotPaint);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ChartPainter oldDelegate) =>
-      oldDelegate.totals != totals || oldDelegate.labelColor != labelColor;
+      oldDelegate.totals != totals ||
+      oldDelegate.labelColor != labelColor ||
+      oldDelegate.netColor != netColor;
 }

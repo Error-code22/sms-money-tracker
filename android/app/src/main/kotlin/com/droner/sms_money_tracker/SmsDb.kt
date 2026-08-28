@@ -276,9 +276,12 @@ object SmsDb {
         c.use { return it.moveToFirst() && it.getString(0) == "manual" }
     }
 
-    fun setNote(context: Context, id: Long, note: String?): Int {
+    fun setNote(context: Context, id: Long, note: String?, category: String?): Int {
         val values = ContentValues()
         if (note.isNullOrEmpty()) values.putNull("note") else values.put("note", note)
+        if (category != null) {
+            if (category.isEmpty()) values.putNull("category") else values.put("category", category)
+        }
         return db(context).update("transactions", values, "id = ?", arrayOf(id.toString()))
     }
 
@@ -345,8 +348,7 @@ object SmsDb {
         return arr.toString()
     }
 
-    fun getCounterpartyTransactions(context: Context, counterparty: String, months: Int): String {
-        val since = if (months <= 0) {
+    fun getCounterpartyTransactions(context: Context, counterparty: String, months: Int): String {        val since = if (months <= 0) {
             0L
         } else {
             System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
@@ -368,6 +370,161 @@ object SmsDb {
             }
         }
         return arr.toString()
+    }
+
+    fun getCategoryTransactions(context: Context, category: String, months: Int): String {
+        val since = if (months <= 0) {
+            0L
+        } else {
+            System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
+        }
+        val c = db(context).query(
+            "transactions",
+            null,
+            "category = ? AND type = 'debit' AND is_confident = 1 AND (ts >= ? OR ? = 0)",
+            arrayOf(category, since.toString(), since.toString()),
+            null,
+            null,
+            "ts DESC",
+            "500"
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(rowToJson(c))
+            }
+        }
+        return arr.toString()
+    }
+
+    fun getTopCategories(context: Context, months: Int): String {
+        val since = if (months <= 0) {
+            0L
+        } else {
+            System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
+        }
+        val c = db(context).rawQuery(
+            "SELECT category, currency, SUM(amount) AS total, COUNT(*) AS cnt " +
+                "FROM transactions WHERE type = 'debit' AND is_confident = 1 AND category != '' " +
+                "AND (ts >= ? OR ? = 0) GROUP BY category, currency " +
+                "ORDER BY total DESC LIMIT 20",
+            arrayOf(since.toString(), since.toString())
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(
+                    JSONObject().apply {
+                        put("category", c.getString(0))
+                        put("currency", c.getString(1) ?: "")
+                        put("total", c.getDouble(2))
+                        put("count", c.getInt(3))
+                    }
+                )
+            }
+        }
+        return arr.toString()
+    }
+
+    fun getDigest(context: Context): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val monthStart = startOfMonth(System.currentTimeMillis())
+        val spent = sumBy(context, "debit", monthStart, headline)
+        val received = sumBy(context, "credit", monthStart, headline)
+        if (spent <= 0.0 && received <= 0.0) return ""
+
+        val top = mutableListOf<String>()
+        database.rawQuery(
+            "SELECT counterparty, SUM(amount) AS total FROM transactions " +
+                "WHERE type = 'debit' AND is_confident = 1 AND counterparty != '' " +
+                "AND currency = ? AND ts >= ? GROUP BY counterparty " +
+                "ORDER BY total DESC LIMIT 2",
+            arrayOf(headline, monthStart.toString())
+        ).use { c ->
+            while (c.moveToNext()) top.add(c.getString(0))
+        }
+
+        val fmt = { d: Double -> "%,.0f".format(d) }
+        val topPart = if (top.isEmpty()) "" else " · Top: ${top.joinToString(", ")}"
+        return "This month: spent $headline ${fmt(spent)} · received ${fmt(received)}$topPart"
+    }
+
+    fun importCsv(context: Context, csv: String): Int {
+        var imported = 0
+        val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        for ((index, line) in csv.lineSequence().withIndex()) {
+            if (index == 0 && line.startsWith("date,")) continue
+            val fields = parseCsvLine(line)
+            if (fields.size < 9) continue
+            val type = if (fields[1].trim() == "credit") "credit" else "debit"
+            val amount = fields[2].trim().toDoubleOrNull() ?: continue
+            val currency = fields[3].trim()
+            val category = fields[4].trim()
+            val counterparty = fields[5].trim()
+            val sender = fields[6].trim()
+            val body = fields[7]
+            val confident = fields[8].trim() == "yes"
+            val ts = try {
+                dateFmt.parse(fields[0].trim())?.time ?: continue
+            } catch (e: Exception) {
+                continue
+            }
+            val values = ContentValues().apply {
+                put("sms_id", importId(sender, body, ts))
+                put("sender", sender)
+                put("body", body)
+                put("amount", amount)
+                put("currency", currency)
+                put("type", type)
+                put("counterparty", counterparty)
+                put("ts", ts)
+                put("is_confident", if (confident) 1 else 0)
+                if (category.isEmpty()) putNull("category") else put("category", category)
+                putNull("interest")
+                putNull("shape")
+                put("source", "sms")
+                putNull("note")
+            }
+            if (db(context).insertWithOnConflict(
+                    "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
+                ) != -1L
+            ) {
+                imported++
+            }
+        }
+        return imported
+    }
+
+    private fun parseCsvLine(line: String): List<String> {
+        val fields = mutableListOf<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            when {
+                inQuotes && ch == '"' && i + 1 < line.length && line[i + 1] == '"' -> {
+                    sb.append('"')
+                    i++
+                }
+                ch == '"' -> inQuotes = !inQuotes
+                ch == ',' && !inQuotes -> {
+                    fields.add(sb.toString())
+                    sb.clear()
+                }
+                else -> sb.append(ch)
+            }
+            i++
+        }
+        fields.add(sb.toString())
+        return fields
+    }
+
+    private fun importId(sender: String, body: String, ts: Long): String {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        val bytes = md.digest("$sender|$body|$ts".toByteArray())
+        return "import-" + bytes.joinToString("") { "%02x".format(it) }
     }
 
     private fun rowToJson(c: android.database.Cursor): JSONObject {

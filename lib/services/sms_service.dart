@@ -109,8 +109,35 @@ class SmsService {
     return await _channel.invokeMethod<String>('exportCsv') ?? '';
   }
 
-  static Future<int> setNote(int id, String note) async {
-    return await _channel.invokeMethod<int>('setNote', {'id': id, 'note': note}) ?? 0;
+  static Future<int> setNote(int id, String note, {String? category}) async {
+    return await _channel.invokeMethod<int>('setNote', {
+      'id': id,
+      'note': note,
+      'category': category,
+    }) ??
+        0;
+  }
+
+  static Future<int> importCsv() async {
+    return await _channel.invokeMethod<int>('importCsv') ?? 0;
+  }
+
+  static Future<List<Map<String, dynamic>>> getTopCategories({int months = 1}) async {
+    final raw = await _channel.invokeMethod<String>('getTopCategories', {'months': months});
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<List<Map<String, dynamic>>> getCategoryTransactions({
+    required String category,
+    int months = 1,
+  }) async {
+    final raw = await _channel.invokeMethod<String>('getCategoryTransactions', {
+      'category': category,
+      'months': months,
+    });
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
   static Future<int> resetSyncState() async {

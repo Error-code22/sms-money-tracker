@@ -6,9 +6,15 @@ import '../services/sms_service.dart';
 import 'transaction_detail.dart';
 
 class CounterpartyScreen extends StatefulWidget {
-  const CounterpartyScreen({super.key, required this.counterparty, required this.months});
+  const CounterpartyScreen({
+    super.key,
+    required this.counterparty,
+    this.category = '',
+    required this.months,
+  });
 
   final String counterparty;
+  final String category;
   final int months;
 
   @override
@@ -19,6 +25,8 @@ class _CounterpartyScreenState extends State<CounterpartyScreen> {
   List<MoneyTransaction> _transactions = [];
   bool _loading = true;
 
+  String get _title => widget.category.isNotEmpty ? widget.category : widget.counterparty;
+
   @override
   void initState() {
     super.initState();
@@ -28,10 +36,15 @@ class _CounterpartyScreenState extends State<CounterpartyScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final rows = await SmsService.getCounterpartyTransactions(
-        counterparty: widget.counterparty,
-        months: widget.months,
-      );
+      final rows = widget.category.isNotEmpty
+          ? await SmsService.getCategoryTransactions(
+              category: widget.category,
+              months: widget.months,
+            )
+          : await SmsService.getCounterpartyTransactions(
+              counterparty: widget.counterparty,
+              months: widget.months,
+            );
       if (mounted) {
         setState(() => _transactions = rows.map(MoneyTransaction.fromJson).toList());
       }
@@ -47,7 +60,7 @@ class _CounterpartyScreenState extends State<CounterpartyScreen> {
     final dateFmt = DateFormat('EEE, d MMM yyyy · h:mm a');
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.counterparty, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: SafeArea(
         bottom: true,

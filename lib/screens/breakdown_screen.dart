@@ -13,6 +13,7 @@ class BreakdownScreen extends StatefulWidget {
 
 class _BreakdownScreenState extends State<BreakdownScreen> {
   int _months = 1;
+  bool _byCategory = false;
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
 
@@ -25,7 +26,9 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final rows = await SmsService.getTopCounterparties(months: _months);
+      final rows = _byCategory
+          ? await SmsService.getTopCategories(months: _months)
+          : await SmsService.getTopCounterparties(months: _months);
       if (mounted) setState(() => _rows = rows);
     } catch (_) {
       if (mounted) setState(() => _rows = []);
@@ -46,17 +49,33 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 1, label: Text('This month')),
-                  ButtonSegment(value: 3, label: Text('3 months')),
-                  ButtonSegment(value: 0, label: Text('All time')),
+              child: Column(
+                children: [
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(value: 1, label: Text('This month')),
+                      ButtonSegment(value: 3, label: Text('3 months')),
+                      ButtonSegment(value: 0, label: Text('All time')),
+                    ],
+                    selected: {_months},
+                    onSelectionChanged: (selection) {
+                      setState(() => _months = selection.first);
+                      _load();
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: false, label: Text('Merchants')),
+                      ButtonSegment(value: true, label: Text('Categories')),
+                    ],
+                    selected: {_byCategory},
+                    onSelectionChanged: (selection) {
+                      setState(() => _byCategory = selection.first);
+                      _load();
+                    },
+                  ),
                 ],
-                selected: {_months},
-                onSelectionChanged: (selection) {
-                  setState(() => _months = selection.first);
-                  _load();
-                },
               ),
             ),
             Expanded(
@@ -65,7 +84,9 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                   : _rows.isEmpty
                       ? Center(
                           child: Text(
-                            'No confident spending found for this period.\nConfirm transactions in the Review tab first.',
+                            _byCategory
+                                ? 'No categorized spending yet.\nTag categories from the note prompt or edit details.'
+                                : 'No confident spending found for this period.\nConfirm transactions in the Review tab first.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: Theme.of(context).hintColor),
                           ),
@@ -75,7 +96,9 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                           itemCount: _rows.length,
                           itemBuilder: (context, index) {
                             final row = _rows[index];
-                            final counterparty = row['counterparty'] as String? ?? '';
+                            final name = _byCategory
+                                ? (row['category'] as String? ?? '')
+                                : (row['counterparty'] as String? ?? '');
                             final currency = row['currency'] as String? ?? '';
                             final total = (row['total'] as num?)?.toDouble() ?? 0;
                             final count = (row['count'] as num?)?.toInt() ?? 0;
@@ -86,7 +109,8 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => CounterpartyScreen(
-                                      counterparty: counterparty,
+                                      counterparty: _byCategory ? '' : name,
+                                      category: _byCategory ? name : '',
                                       months: _months,
                                     ),
                                   ),
@@ -95,7 +119,7 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                                   child: Text('${index + 1}'),
                                 ),
                                 title: Text(
-                                  counterparty,
+                                  name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),

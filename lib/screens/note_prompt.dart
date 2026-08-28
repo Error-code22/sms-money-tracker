@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../category_rules.dart';
 import '../models/transaction.dart';
 import '../services/sms_service.dart';
 
@@ -32,6 +33,7 @@ class NotesPromptSheet extends StatefulWidget {
 
 class _NotesPromptSheetState extends State<NotesPromptSheet> {
   final Map<int, TextEditingController> _controllers = {};
+  final Map<int, String?> _categories = {};
   bool _saving = false;
 
   @override
@@ -39,6 +41,7 @@ class _NotesPromptSheetState extends State<NotesPromptSheet> {
     super.initState();
     for (final tx in widget.fresh) {
       _controllers[tx.id] = TextEditingController(text: tx.note);
+      _categories[tx.id] = tx.category.isEmpty ? null : tx.category;
     }
   }
 
@@ -53,11 +56,11 @@ class _NotesPromptSheetState extends State<NotesPromptSheet> {
   Future<void> _done() async {
     setState(() => _saving = true);
     try {
+      final rules = await CategoryRules.loadRules();
       for (final tx in widget.fresh) {
         final note = _controllers[tx.id]?.text.trim() ?? '';
-        if (note != tx.note) {
-          await SmsService.setNote(tx.id, note);
-        }
+        final category = _categories[tx.id] ?? CategoryRules.apply(note, rules);
+        await SmsService.setNote(tx.id, note, category: category);
       }
       if (mounted) Navigator.pop(context);
     } catch (_) {
@@ -81,7 +84,7 @@ class _NotesPromptSheetState extends State<NotesPromptSheet> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Optional. Tap outside to skip — you can add notes later from any transaction.',
+          'Optional. Tap a category or type a note — rules auto-tag from words you set in Settings.',
           style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
         ),
         const SizedBox(height: 12),
@@ -124,6 +127,23 @@ class _NotesPromptSheetState extends State<NotesPromptSheet> {
                             hintText: 'e.g. Jumia order, pocket money, fare...',
                             isDense: true,
                           ),
+                        ),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: -6,
+                          children: [
+                            for (final preset in kPresetCategories)
+                              ChoiceChip(
+                                label: Text(preset, style: const TextStyle(fontSize: 11)),
+                                selected: _categories[tx.id] == preset,
+                                visualDensity: VisualDensity.compact,
+                                onSelected: (selected) {
+                                  setState(() {
+                                    _categories[tx.id] = selected ? preset : null;
+                                  });
+                                },
+                              ),
+                          ],
                         ),
                       ],
                     ),

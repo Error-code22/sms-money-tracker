@@ -8,6 +8,8 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ai_advisor.dart';
+import 'category_rules.dart';
+import 'services/sms_service.dart';
 
 class AppLock {
   static const _enabledKey = 'lock_enabled';
@@ -383,6 +385,11 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
   bool enabled = await AppLock.isEnabled();
   bool hasPin = await AppLock.hasPin();
   int grace = await AppLock.lockGraceSeconds();
+  bool digest = true;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    digest = prefs.getBool('digest_enabled') ?? true;
+  } catch (_) {}
   if (!context.mounted) return;
 
   showDialog<void>(
@@ -459,6 +466,50 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
                 subtitle: const Text('Optional — uses your own Groq API key'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => showAiAdvisorDialog(dialogContext),
+              ),
+              const Divider(),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Weekly digest'),
+                subtitle: const Text('A recap notification about once a week'),
+                value: digest,
+                onChanged: (value) async {
+                  try {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool('digest_enabled', value);
+                  } catch (_) {}
+                  setState(() => digest = value);
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.rule),
+                title: const Text('Category rules'),
+                subtitle: const Text('Auto-tag notes: keyword → category'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showCategoryRulesDialog(dialogContext),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.file_upload_outlined),
+                title: const Text('Restore from CSV'),
+                subtitle: const Text('Import a previously exported spreadsheet'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  final count = await SmsService.importCsv();
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        count > 0
+                            ? 'Imported $count transactions'
+                            : 'Nothing imported (cancelled or no new rows)',
+                      ),
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                  onChanged();
+                },
               ),
             ],
           ),

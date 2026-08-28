@@ -15,12 +15,7 @@ object Notifier {
     private const val NOTIFICATION_ID = 1
 
     fun notifyNewTransactions(context: Context, count: Int) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        if (notificationsBlocked(context)) return
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -32,13 +27,7 @@ object Notifier {
             manager.createNotificationChannel(channel)
         }
 
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val pending = PendingIntent.getActivity(
-            context,
-            0,
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pending = launchPendingIntent(context)
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(context, CHANNEL_ID)
@@ -56,5 +45,54 @@ object Notifier {
             .build()
 
         manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private const val DIGEST_CHANNEL_ID = "weekly_digest"
+    private const val DIGEST_CHANNEL_NAME = "Weekly recap"
+    private const val DIGEST_NOTIFICATION_ID = 2
+
+    fun notifyDigest(context: Context, text: String) {
+        if (notificationsBlocked(context)) return
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                DIGEST_CHANNEL_ID, DIGEST_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT
+            )
+            manager.createNotificationChannel(channel)
+        }
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, DIGEST_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context)
+        }
+        val notification = builder
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Weekly money recap")
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentText(text)
+            .setContentIntent(launchPendingIntent(context))
+            .setAutoCancel(true)
+            .build()
+
+        manager.notify(DIGEST_NOTIFICATION_ID, notification)
+    }
+
+    private fun notificationsBlocked(context: Context): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun launchPendingIntent(context: Context): PendingIntent {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        return PendingIntent.getActivity(
+            context,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 }

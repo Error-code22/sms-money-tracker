@@ -33,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _monthlyTotals = [];
   int _reviewCount = 0;
+  int _chartMonths = 6;
   bool _lockEnabled = false;
   bool _locked = false;
   bool _duress = false;
@@ -189,7 +190,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _load() async {
     final txs = await SmsService.getTransactions(filter: _filter, query: _query);
     final summary = await SmsService.getSummary();
-    final totals = await SmsService.getMonthlyTotals(months: 6);
+    final totals = await SmsService.getMonthlyTotals(months: _chartMonths);
     final review = await SmsService.getTransactions(filter: 'review');
     if (!mounted) return;
     setState(() {
@@ -242,6 +243,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 });
               }
             } catch (_) {}
+            await _load();
           },
         );
       case 'export':
@@ -603,20 +605,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Last 6 months ($currency)',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Monthly ($currency)',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 3, label: Text('3M')),
+                    ButtonSegment(value: 6, label: Text('6M')),
+                    ButtonSegment(value: 12, label: Text('12M')),
+                  ],
+                  selected: {_chartMonths},
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onSelectionChanged: (selection) async {
+                    setState(() => _chartMonths = selection.first);
+                    try {
+                      final totals = await SmsService.getMonthlyTotals(months: _chartMonths);
+                      if (mounted) setState(() => _monthlyTotals = totals);
+                    } catch (_) {}
+                  },
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Row(
-              children: const [
-                _LegendDot(color: Color(0xFFE53935), label: 'Out'),
-                SizedBox(width: 12),
-                _LegendDot(color: Color(0xFF43A047), label: 'In'),
+              children: [
+                const _LegendDot(color: Color(0xFFE53935), label: 'Out'),
+                const SizedBox(width: 12),
+                const _LegendDot(color: Color(0xFF43A047), label: 'In'),
+                const SizedBox(width: 12),
+                _LegendDot(
+                  color: Theme.of(context).colorScheme.primary,
+                  label: 'Net',
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            MonthlyChart(totals: _monthlyTotals),
+            MonthlyChart(
+              totals: _monthlyTotals,
+              netColor: Theme.of(context).colorScheme.primary,
+            ),
           ],
         ),
       ),

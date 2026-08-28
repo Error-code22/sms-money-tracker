@@ -74,6 +74,7 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
 }
 
 flutter {
