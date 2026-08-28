@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -123,7 +124,7 @@ class _LockScreenState extends State<LockScreen> {
   final _controller = TextEditingController();
   String? _error;
   bool _busy = false;
-  bool _biometricFailed = false;
+  String? _biometricFailed;
 
   @override
   void dispose() {
@@ -167,10 +168,23 @@ class _LockScreenState extends State<LockScreen> {
       if (ok) {
         Navigator.pop(context, LockResult.unlocked);
       } else {
-        setState(() => _biometricFailed = true);
+        setState(() {
+          _biometricFailed =
+              'Authentication was canceled or not recognized. Try again, or use your PIN.';
+        });
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _biometricFailed = 'Biometrics error (${e.code}). '
+              'Fingerprints are enrolled in your phone\'s system Settings — '
+              'or just use your PIN.';
+        });
       }
     } catch (_) {
-      if (mounted) setState(() => _biometricFailed = true);
+      if (mounted) {
+        setState(() => _biometricFailed = 'Biometrics failed. Use your PIN.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -209,10 +223,10 @@ class _LockScreenState extends State<LockScreen> {
                       keyboardType: TextInputType.number,
                       maxLength: 8,
                       onChanged: (_) {
-                        if (_error != null || _biometricFailed) {
+                        if (_error != null || _biometricFailed != null) {
                           setState(() {
                             _error = null;
-                            _biometricFailed = false;
+                            _biometricFailed = null;
                           });
                         }
                       },
@@ -223,11 +237,9 @@ class _LockScreenState extends State<LockScreen> {
                         _error!,
                         style: TextStyle(color: scheme.error),
                       ),
-                    if (_biometricFailed)
+                    if (_biometricFailed != null)
                       Text(
-                        'Biometrics failed or none are enrolled. Enroll a fingerprint '
-                        'in your phone\'s system Settings (Security → Fingerprint), '
-                        'or use your PIN.',
+                        _biometricFailed!,
                         style: TextStyle(
                           color: scheme.onSurfaceVariant,
                           fontSize: 12,

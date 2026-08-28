@@ -152,7 +152,7 @@ void main() {
     expect(find.text('JOHN DOE'), findsOneWidget);
     expect(find.text('-500 KES'), findsOneWidget);
     expect(find.text('Confirmed'), findsOneWidget);
-    expect(find.text('Edit'), findsOneWidget);
+    expect(find.text('Edit details'), findsOneWidget);
     expect(find.textContaining('QGH7K3MNOP Confirmed'), findsOneWidget);
   });
 

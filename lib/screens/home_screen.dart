@@ -663,7 +663,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
 
-    final formatter = DateFormat('MMM d, yyyy');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -675,7 +674,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ..._transactions.map(
           (tx) => _TransactionTile(
             tx: tx,
-            formatter: formatter,
             reviewMode: _filter == 'review',
             onTap: () => showTransactionDetail(context, tx, onChanged: _load),
             onConfirm: () => _reviewAction(tx, confirm: true),
@@ -781,7 +779,6 @@ class _LegendDot extends StatelessWidget {
 
 class _TransactionTile extends StatelessWidget {
   final MoneyTransaction tx;
-  final DateFormat formatter;
   final bool reviewMode;
   final VoidCallback onTap;
   final VoidCallback onConfirm;
@@ -789,7 +786,6 @@ class _TransactionTile extends StatelessWidget {
 
   const _TransactionTile({
     required this.tx,
-    required this.formatter,
     required this.reviewMode,
     required this.onTap,
     required this.onConfirm,
@@ -799,52 +795,102 @@ class _TransactionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = tx.isDebit ? const Color(0xFFE53935) : const Color(0xFF43A047);
-    final time = DateFormat('h:mm a').format(tx.date);
+    final time = DateFormat('d MMM, h:mm a').format(tx.date);
     final extra = tx.extraInfo;
-    final noteLine = tx.note.isNotEmpty ? '\nNote: ${tx.note}' : '';
-    final subtitleText = '${formatter.format(tx.date)} $time\n${tx.subtitle}'
-        '${extra.isNotEmpty ? '\n$extra' : ''}$noteLine';
+    final typeLabel = tx.isDebit ? 'Money out' : 'Money in';
+    final senderInfo = [
+      if (tx.sender.isNotEmpty) tx.sender,
+      if (tx.currency.isNotEmpty) tx.currency,
+    ].join(' · ');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
+      child: InkWell(
         onTap: onTap,
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: 0.12),
-          child: Icon(
-            tx.isDebit ? Icons.arrow_upward : Icons.arrow_downward,
-            color: color,
-            size: 18,
-          ),
-        ),
-        title: Text(tx.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          subtitleText,
-          maxLines: extra.isNotEmpty || noteLine.isNotEmpty ? 4 : 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12),
-        ),
-        trailing: reviewMode
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  IconButton(
-                    tooltip: 'Confirm as money',
-                    onPressed: onConfirm,
-                    icon: const Icon(Icons.check_circle, color: Color(0xFF43A047)),
+                  Expanded(
+                    child: Text(
+                      tx.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  IconButton(
-                    tooltip: 'Not money',
-                    onPressed: onNotMoney,
-                    icon: const Icon(Icons.cancel, color: Color(0xFFE53935)),
+                  if (reviewMode)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Confirm as money',
+                          onPressed: onConfirm,
+                          icon: const Icon(Icons.check_circle, color: Color(0xFF43A047)),
+                        ),
+                        IconButton(
+                          tooltip: 'Not money',
+                          onPressed: onNotMoney,
+                          icon: const Icon(Icons.cancel, color: Color(0xFFE53935)),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(
+                    tx.isDebit ? Icons.arrow_upward : Icons.arrow_downward,
+                    color: color,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    typeLabel,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    tx.formatAmount(),
+                    style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 15),
                   ),
                 ],
-              )
-            : Text(
-                tx.formatAmount(),
-                style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14),
               ),
-        isThreeLine: true,
+              const SizedBox(height: 2),
+              Text(
+                senderInfo.isNotEmpty ? '$senderInfo · $time' : time,
+                style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+              ),
+              if (tx.note.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Note: ${tx.note}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
+              if (extra.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  extra,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

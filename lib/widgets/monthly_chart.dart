@@ -40,6 +40,14 @@ class _ChartPainter extends CustomPainter {
     final groupWidth = size.width / totals.length;
     final barWidth = math.min(groupWidth * 0.28, 18.0);
 
+    final gridPaint = Paint()
+      ..color = labelColor.withValues(alpha: 0.25)
+      ..strokeWidth = 1;
+    for (var i = 0; i <= 3; i++) {
+      final y = topPad + chartHeight * i / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
     final spentPaint = Paint()..color = const Color(0xFFE53935);
     final receivedPaint = Paint()..color = const Color(0xFF43A047);
     final labelStyle = TextStyle(fontSize: 10, color: labelColor);

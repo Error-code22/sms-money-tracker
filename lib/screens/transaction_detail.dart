@@ -82,7 +82,7 @@ Future<void> showTransactionDetail(
             }
           },
           icon: const Icon(Icons.edit),
-          label: const Text('Edit'),
+          label: const Text('Edit details'),
         ),
       ],
     ),
