@@ -39,6 +39,13 @@ The APK lands in `build/app/outputs/flutter-apk/app-release.apk`. Copy it to you
 
 Requires Android 7.0 (API 24) or newer.
 
+## Troubleshooting: "App not installed"
+
+- **You previously installed an older build signed with a different key.** Uninstall the existing "Where Ma Money?" app first, then install. This is the most common cause — early builds used a debug key.
+- **The file transfer corrupted the APK.** Verify the file size matches the release asset (the `.apk` should be exactly 54,885,894 bytes for v1.2.0), then re-download directly from the release page.
+- **"Install unknown apps" isn't granted** to the app doing the installing (Files/browser). Grant it under Settings → Apps → Special access → Install unknown apps.
+- Still failing? From a PC with USB debugging: `adb install where-ma-money-1.2.0.apk` prints the exact reason.
+
 ## First run
 
 1. Open the app
