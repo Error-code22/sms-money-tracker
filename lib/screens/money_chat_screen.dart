@@ -98,12 +98,11 @@ class _MoneyChatScreenState extends State<MoneyChatScreen> {
         _messages.add(ChatMessage(text: response, isUser: false, time: DateTime.now()));
       });
     } catch (e) {
+      final msg = e.toString().contains('No API key')
+          ? "I need a Groq API key to talk. Go to Settings → AI advisor and add your key."
+          : "My brain froze. Try again, sawa?";
       setState(() {
-        _messages.add(ChatMessage(
-          text: "My brain froze. Try again, sawa?",
-          isUser: false,
-          time: DateTime.now(),
-        ));
+        _messages.add(ChatMessage(text: msg, isUser: false, time: DateTime.now()));
       });
     }
 

@@ -17,7 +17,12 @@ Popular apps (like Truecaller) can't read SMS anymore because Google Play bans S
 - **Quick notes:** when new transactions arrive, a prompt (or a notification if the app is closed) nudges you to write what the money was for — before you forget
 - **Categories & rules:** one-tap preset categories in the note prompt, plus keyword → category rules that auto-tag your notes
 - **Where it goes:** top-10 breakdown by merchant or category (this month / 3 months / all time), each tappable down to individual transactions
-- **Monthly chart:** money in/out bars with a net line, 3M/6M/12M ranges
+- **Monthly chart:** money in/out bars with a net line, 3M/6M/12M ranges, tappable months with exact numbers, Y-axis labels, dashed budget cap line
+- **Daily chart:** daily spend bars + cumulative lines comparing this month vs last month
+- **Full-screen Charts page:** tap the chart card to see everything with room to breathe
+- **Spending Speed:** real-time burn rate with speedometer gauge — shows Ksh/day, speed level (Slow/Normal/Fast/Danger), and projection ("At this rate: Ksh X by month end")
+- **Coming up:** predicts your next payments from recurring habits — shows likely upcoming debits within 14 days with dates and amounts
+- **Money Chat:** WhatsApp-style chat where a blunt AI friend roasts your spending — privacy-first, AI only sees sender, date, type, amount, and your notes (never the full SMS)
 - **Weekly digest:** a recap notification (~once a week) with this month's spend, received and top merchants
 - **Manual entries:** add cash spending the SMS never sees; edit any transaction's parsed details (the raw SMS itself is never modified)
 - **App lock:** PIN (salted hash) and/or biometrics, full-screen lock on open and after a background grace period (instant / 30 sec / 2 min), duress PIN that opens a decoy empty dashboard, and the window is `FLAG_SECURE` so recents and screenshots stay blank
@@ -65,3 +70,4 @@ Your SMS never leaves your phone. The only network calls ever made are:
 
 1. A GitHub release check when you open About (a version number, nothing personal).
 2. The optional AI advisor, which you enable yourself with your own Groq key — it sends only your notes, amounts and transaction types, never your SMS, and only when you explicitly tap "Get advice".
+3. The optional Money Chat, which uses the same Groq key — it sends only sender, date, type, amount, and your notes (never the full SMS).
