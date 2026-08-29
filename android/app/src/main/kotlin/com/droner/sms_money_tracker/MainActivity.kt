@@ -177,6 +177,15 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "getDailyTotals" -> {
+                        val year = call.argument<Int>("year") ?: 2026
+                        val month = call.argument<Int>("month") ?: 1
+                        try {
+                            result.success(SmsDb.getDailyTotals(applicationContext, year, month))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
                     "updateWidget" -> {
                         try {
                             MoneyWidget.refreshAll(applicationContext)

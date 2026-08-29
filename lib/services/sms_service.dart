@@ -148,6 +148,18 @@ class SmsService {
     return v ?? 0;
   }
 
+  static Future<List<Map<String, dynamic>>> getDailyTotals({
+    required int year,
+    required int month,
+  }) async {
+    final raw = await _channel.invokeMethod<String>('getDailyTotals', {
+      'year': year,
+      'month': month,
+    });
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<List<Map<String, dynamic>>> getRecurring({int lookbackDays = 90}) async {
     final raw = await _channel.invokeMethod<String>('getRecurring', {
       'lookbackDays': lookbackDays,

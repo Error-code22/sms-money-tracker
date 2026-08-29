@@ -4,7 +4,10 @@ import 'package:intl/intl.dart';
 import '../services/sms_service.dart';
 
 class MonthReportScreen extends StatefulWidget {
-  const MonthReportScreen({super.key});
+  const MonthReportScreen({super.key, this.year, this.month});
+
+  final int? year;
+  final int? month;
 
   @override
   State<MonthReportScreen> createState() => _MonthReportScreenState();
@@ -21,8 +24,8 @@ class _MonthReportScreenState extends State<MonthReportScreen> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _year = now.year;
-    _month = now.month;
+    _year = widget.year ?? now.year;
+    _month = widget.month ?? now.month;
     _load();
   }
 

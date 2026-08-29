@@ -533,6 +533,14 @@ object SmsDb {
         } else {
             System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
         }
+        if (target.startsWith("total:")) {
+            val c = db(context).rawQuery(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions " +
+                    "WHERE type = 'debit' AND is_confident = 1 AND ts >= ?",
+                arrayOf(since.toString())
+            )
+            c.use { it.moveToFirst(); return it.getDouble(0) }
+        }
         val column: String
         val value: String
         when {
@@ -552,6 +560,37 @@ object SmsDb {
             arrayOf(value, since.toString())
         )
         c.use { it.moveToFirst(); return it.getDouble(0) }
+    }
+
+    fun getDailyTotals(context: Context, year: Int, month: Int): String {
+        val headline = headlineCurrency(db(context))
+        val cal = Calendar.getInstance().apply {
+            set(year, month - 1, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val start = cal.timeInMillis
+        val end = start + 32L * 24 * 3600 * 1000
+        val c = db(context).rawQuery(
+            "SELECT CAST(strftime('%d', ts/1000, 'unixepoch', 'localtime') AS INTEGER) AS day, " +
+                "SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), " +
+                "SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) " +
+                "FROM transactions WHERE currency = ? AND ts >= ? AND ts < ? " +
+                "GROUP BY day ORDER BY day",
+            arrayOf(headline, start.toString(), end.toString())
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(
+                    JSONObject().apply {
+                        put("day", c.getInt(0))
+                        put("spent", c.getDouble(1))
+                        put("received", c.getDouble(2))
+                    }
+                )
+            }
+        }
+        return arr.toString()
     }
 
     fun getRecurring(context: Context, lookbackDays: Int): String {

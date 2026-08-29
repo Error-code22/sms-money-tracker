@@ -8,6 +8,7 @@ import 'package:sms_money_tracker/dialogs.dart';
 import 'package:sms_money_tracker/main.dart';
 import 'package:sms_money_tracker/models/transaction.dart';
 import 'package:sms_money_tracker/screens/breakdown_screen.dart';
+import 'package:sms_money_tracker/screens/charts_screen.dart';
 import 'package:sms_money_tracker/screens/transaction_detail.dart';
 import 'package:sms_money_tracker/screens/transaction_form.dart';
 
@@ -196,5 +197,34 @@ void main() {
     expect(find.text('This month'), findsOneWidget);
     expect(find.text('3 months'), findsOneWidget);
     expect(find.text('All time'), findsOneWidget);
+  });
+
+  testWidgets('Charts screen renders in dark mode', (WidgetTester tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('sms_money_tracker/channel'),
+      (call) async {
+        switch (call.method) {
+          case 'getMonthlyTotals':
+            return '[]';
+          case 'getDailyTotals':
+            return '[]';
+          case 'getBudgetSpend':
+            return 0.0;
+          default:
+            return null;
+        }
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+        home: const ChartsScreen(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Charts'), findsOneWidget);
+    expect(find.text('Monthly'), findsOneWidget);
+    expect(find.textContaining('daily spending'), findsOneWidget);
+    expect(find.text('Tap a bar'), findsOneWidget);
   });
 }

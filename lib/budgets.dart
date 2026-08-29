@@ -63,7 +63,6 @@ Future<void> showBudgetsDialog(BuildContext context, {required VoidCallback onCh
   final nameController = TextEditingController();
   final limitController = TextEditingController();
   final currencyController = TextEditingController(text: 'KES');
-
   showDialog<void>(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
@@ -107,6 +106,7 @@ Future<void> showBudgetsDialog(BuildContext context, {required VoidCallback onCh
                 segments: const [
                   ButtonSegment(value: 'category', label: Text('Category')),
                   ButtonSegment(value: 'merchant', label: Text('Merchant')),
+                  ButtonSegment(value: 'total', label: Text('Total')),
                 ],
                 selected: {kind},
                 onSelectionChanged: (s) => setState(() => kind = s.first),
@@ -115,7 +115,11 @@ Future<void> showBudgetsDialog(BuildContext context, {required VoidCallback onCh
               TextField(
                 controller: nameController,
                 decoration: InputDecoration(
-                  labelText: kind == 'category' ? 'Category (e.g. Food)' : 'Merchant (e.g. NAIVAS)',
+                  labelText: kind == 'category'
+                      ? 'Category (e.g. Food)'
+                      : kind == 'merchant'
+                          ? 'Merchant (e.g. NAIVAS)'
+                          : 'Label (e.g. Everything)',
                   isDense: true,
                 ),
               ),
