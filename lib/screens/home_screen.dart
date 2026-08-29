@@ -12,6 +12,7 @@ import '../dialogs.dart';
 import '../models/transaction.dart';
 import '../services/sms_service.dart';
 import '../widgets/monthly_chart.dart';
+import '../widgets/spending_speed_card.dart';
 import '../widgets/upcoming_card.dart';
 import 'breakdown_screen.dart';
 import 'charts_screen.dart';
@@ -433,6 +434,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
               const SizedBox(height: 8),
               _buildSummary(),
+              const SizedBox(height: 16),
+              SpendingSpeedCard(transactions: _transactions),
               const SizedBox(height: 16),
               UpcomingCard(key: ValueKey(_transactions.length)),
               const SizedBox(height: 16),
