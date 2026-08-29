@@ -151,6 +151,40 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("query_failed", e.message, null)
                         }
                     }
+                    "getBudgetSpend" -> {
+                        val target = call.argument<String>("target") ?: ""
+                        val months = call.argument<Int>("months") ?: 1
+                        try {
+                            result.success(SmsDb.getBudgetSpend(applicationContext, target, months))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
+                    "getRecurring" -> {
+                        val lookbackDays = call.argument<Int>("lookbackDays") ?: 90
+                        try {
+                            result.success(SmsDb.getRecurring(applicationContext, lookbackDays))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
+                    "getMonthReport" -> {
+                        val year = call.argument<Int>("year") ?: 2026
+                        val month = call.argument<Int>("month") ?: 1
+                        try {
+                            result.success(SmsDb.getMonthReport(applicationContext, year, month))
+                        } catch (e: Exception) {
+                            result.error("query_failed", e.message, null)
+                        }
+                    }
+                    "updateWidget" -> {
+                        try {
+                            MoneyWidget.refreshAll(applicationContext)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("widget_failed", e.message, null)
+                        }
+                    }
                     "confirmTransaction" -> {
                         val id = (call.argument<Number>("id") ?: 0).toLong()
                         try {

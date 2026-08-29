@@ -140,6 +140,40 @@ class SmsService {
     return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
+  static Future<double> getBudgetSpend({required String target, int months = 1}) async {
+    final v = await _channel.invokeMethod<double>('getBudgetSpend', {
+      'target': target,
+      'months': months,
+    });
+    return v ?? 0;
+  }
+
+  static Future<List<Map<String, dynamic>>> getRecurring({int lookbackDays = 90}) async {
+    final raw = await _channel.invokeMethod<String>('getRecurring', {
+      'lookbackDays': lookbackDays,
+    });
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<Map<String, dynamic>> getMonthReport({
+    required int year,
+    required int month,
+  }) async {
+    final raw = await _channel.invokeMethod<String>('getMonthReport', {
+      'year': year,
+      'month': month,
+    });
+    if (raw == null || raw.isEmpty) return {};
+    return jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  static Future<void> updateWidget() async {
+    try {
+      await _channel.invokeMethod('updateWidget');
+    } catch (_) {}
+  }
+
   static Future<int> resetSyncState() async {
     return await _channel.invokeMethod<int>('resetSyncState') ?? 0;
   }

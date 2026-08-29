@@ -8,6 +8,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ai_advisor.dart';
+import 'budgets.dart';
 import 'category_rules.dart';
 import 'services/sms_service.dart';
 
@@ -488,6 +489,14 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
                 subtitle: const Text('Auto-tag notes: keyword → category'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => showCategoryRulesDialog(dialogContext),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.savings_outlined),
+                title: const Text('Budgets'),
+                subtitle: const Text('Monthly caps per category or merchant'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showBudgetsDialog(dialogContext, onChanged: onChanged),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,

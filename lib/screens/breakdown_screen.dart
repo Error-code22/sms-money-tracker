@@ -13,7 +13,7 @@ class BreakdownScreen extends StatefulWidget {
 
 class _BreakdownScreenState extends State<BreakdownScreen> {
   int _months = 1;
-  bool _byCategory = false;
+  String _mode = 'merchants';
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
 
@@ -26,9 +26,11 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final rows = _byCategory
-          ? await SmsService.getTopCategories(months: _months)
-          : await SmsService.getTopCounterparties(months: _months);
+      final rows = switch (_mode) {
+        'categories' => await SmsService.getTopCategories(months: _months),
+        'recurring' => await SmsService.getRecurring(),
+        _ => await SmsService.getTopCounterparties(months: _months),
+      };
       if (mounted) setState(() => _rows = rows);
     } catch (_) {
       if (mounted) setState(() => _rows = []);
@@ -41,6 +43,7 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isRecurring = _mode == 'recurring';
     return Scaffold(
       appBar: AppBar(title: const Text('Where it goes')),
       body: SafeArea(
@@ -51,30 +54,33 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Column(
                 children: [
-                  SegmentedButton<int>(
+                  SegmentedButton<String>(
                     segments: const [
-                      ButtonSegment(value: 1, label: Text('This month')),
-                      ButtonSegment(value: 3, label: Text('3 months')),
-                      ButtonSegment(value: 0, label: Text('All time')),
+                      ButtonSegment(value: 'merchants', label: Text('Merchants')),
+                      ButtonSegment(value: 'categories', label: Text('Categories')),
+                      ButtonSegment(value: 'recurring', label: Text('Recurring')),
                     ],
-                    selected: {_months},
+                    selected: {_mode},
                     onSelectionChanged: (selection) {
-                      setState(() => _months = selection.first);
+                      setState(() => _mode = selection.first);
                       _load();
                     },
                   ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(value: false, label: Text('Merchants')),
-                      ButtonSegment(value: true, label: Text('Categories')),
-                    ],
-                    selected: {_byCategory},
-                    onSelectionChanged: (selection) {
-                      setState(() => _byCategory = selection.first);
-                      _load();
-                    },
-                  ),
+                  if (!isRecurring) ...[
+                    const SizedBox(height: 8),
+                    SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 1, label: Text('This month')),
+                        ButtonSegment(value: 3, label: Text('3 months')),
+                        ButtonSegment(value: 0, label: Text('All time')),
+                      ],
+                      selected: {_months},
+                      onSelectionChanged: (selection) {
+                        setState(() => _months = selection.first);
+                        _load();
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -84,9 +90,11 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                   : _rows.isEmpty
                       ? Center(
                           child: Text(
-                            _byCategory
-                                ? 'No categorized spending yet.\nTag categories from the note prompt or edit details.'
-                                : 'No confident spending found for this period.\nConfirm transactions in the Review tab first.',
+                            isRecurring
+                                ? 'No repeating merchants found yet.\nNeeds at least 3 visits across 2 months.'
+                                : _mode == 'categories'
+                                    ? 'No categorized spending yet.\nTag categories from the note prompt or edit details.'
+                                    : 'No confident spending found for this period.\nConfirm transactions in the Review tab first.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: Theme.of(context).hintColor),
                           ),
@@ -96,12 +104,17 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                           itemCount: _rows.length,
                           itemBuilder: (context, index) {
                             final row = _rows[index];
-                            final name = _byCategory
-                                ? (row['category'] as String? ?? '')
-                                : (row['counterparty'] as String? ?? '');
+                            final name = isRecurring
+                                ? (row['counterparty'] as String? ?? '')
+                                : _mode == 'categories'
+                                    ? (row['category'] as String? ?? '')
+                                    : (row['counterparty'] as String? ?? '');
                             final currency = row['currency'] as String? ?? '';
                             final total = (row['total'] as num?)?.toDouble() ?? 0;
                             final count = (row['count'] as num?)?.toInt() ?? 0;
+                            final subtitle = isRecurring
+                                ? '~$currency ${_fmt((row['average'] as num?)?.toDouble() ?? 0)} avg · $count times · ${row['months']} months'
+                                : '$count transactions';
                             return Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
@@ -109,8 +122,8 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => CounterpartyScreen(
-                                      counterparty: _byCategory ? '' : name,
-                                      category: _byCategory ? name : '',
+                                      counterparty: name,
+                                      category: _mode == 'categories' ? name : '',
                                       months: _months,
                                     ),
                                   ),
@@ -123,9 +136,11 @@ class _BreakdownScreenState extends State<BreakdownScreen> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                subtitle: Text('$count transactions'),
+                                subtitle: Text(subtitle),
                                 trailing: Text(
-                                  '$currency ${_fmt(total)}',
+                                  isRecurring
+                                      ? ''
+                                      : '$currency ${_fmt(total)}',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14,

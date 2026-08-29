@@ -7,11 +7,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_lock.dart';
+import '../budgets.dart';
 import '../dialogs.dart';
 import '../models/transaction.dart';
 import '../services/sms_service.dart';
 import '../widgets/monthly_chart.dart';
 import 'breakdown_screen.dart';
+import 'month_report.dart';
 import 'note_prompt.dart';
 import 'transaction_detail.dart';
 import 'transaction_form.dart';
@@ -34,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<Map<String, dynamic>> _monthlyTotals = [];
   int _reviewCount = 0;
   int _chartMonths = 6;
+  bool _showBackupNudge = false;
   bool _lockEnabled = false;
   bool _locked = false;
   bool _duress = false;
@@ -132,11 +135,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       exempt = await SmsService.isBatteryExempt();
     } catch (_) {}
     _askNotificationPermissionOnce();
+    _checkBackupNudge();
     setState(() {
       _smsStatus = status;
       _batteryExempt = exempt;
     });
     if (status.isGranted) await _sync();
+  }
+
+  /// Start the export clock on first run; after 14 days without a CSV
+  /// export, show a gentle reminder.
+  Future<void> _checkBackupNudge() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = prefs.getInt('last_export_ts');
+      if (last == null) {
+        await prefs.setInt('last_export_ts', DateTime.now().millisecondsSinceEpoch);
+        return;
+      }
+      final elapsed = DateTime.now().millisecondsSinceEpoch - last;
+      if (elapsed > 14 * 24 * 3600 * 1000 && mounted) {
+        setState(() => _showBackupNudge = true);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _snoozeBackupNudge() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('last_export_ts', DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
+    if (mounted) setState(() => _showBackupNudge = false);
   }
 
   Future<void> _askNotificationPermissionOnce() async {
@@ -155,6 +184,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await SmsService.sync();
       await _load();
       await _maybePromptNotes();
+      await SmsService.updateWidget();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _syncing = false);
@@ -249,6 +279,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case 'export':
         try {
           final path = await SmsService.exportCsv();
+          if (!mounted) return;
+          if (path.isNotEmpty) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('last_export_ts', DateTime.now().millisecondsSinceEpoch);
+          }
+          if (mounted) setState(() => _showBackupNudge = false);
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -386,12 +422,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.all(16),
             children: [
               if (needSetup) _buildSetupCard(),
+              if (_showBackupNudge) ...[
+                const SizedBox(height: 8),
+                _buildBackupNudge(),
+              ],
               if (_reviewCount > 0 && _filter != 'review') ...[
                 const SizedBox(height: 8),
                 _buildReviewBanner(),
               ],
               const SizedBox(height: 8),
               _buildSummary(),
+              const SizedBox(height: 16),
+              const BudgetsCard(),
               const SizedBox(height: 16),
               _buildChartCard(),
               const SizedBox(height: 16),
@@ -400,6 +442,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _buildTransactionList(),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackupNudge() {
+    return Card(
+      color: Theme.of(context).colorScheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Icon(Icons.backup_outlined, size: 20),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'It\'s been a while since your last CSV export — back up your history.',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                final path = await SmsService.exportCsv();
+                await _snoozeBackupNudge();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(path.isEmpty ? 'Export failed' : 'Saved to $path'),
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+              },
+              child: const Text('Export'),
+            ),
+            TextButton(
+              onPressed: _snoozeBackupNudge,
+              child: const Text('Later'),
+            ),
+          ],
         ),
       ),
     );
@@ -518,23 +599,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         Builder(builder: (context) {
           final isDark = Theme.of(context).brightness == Brightness.dark;
           final positive = net >= 0;
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-            decoration: BoxDecoration(
-              color: positive
-                  ? (isDark ? const Color(0xFF1B3B24) : const Color(0xFFE8F5E9))
-                  : (isDark ? const Color(0xFF4A1E1E) : const Color(0xFFFFEBEE)),
-              borderRadius: BorderRadius.circular(12),
+          return InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MonthReportScreen()),
             ),
-            child: Text(
-              'Net this month ($currency): ${positive ? '+' : ''}${_fmtAmount(net)}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+              decoration: BoxDecoration(
                 color: positive
-                    ? (isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32))
-                    : (isDark ? const Color(0xFFE57373) : const Color(0xFFC62828)),
+                    ? (isDark ? const Color(0xFF1B3B24) : const Color(0xFFE8F5E9))
+                    : (isDark ? const Color(0xFF4A1E1E) : const Color(0xFFFFEBEE)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Net this month ($currency): ${positive ? '+' : ''}${_fmtAmount(net)}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: positive
+                            ? (isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32))
+                            : (isDark ? const Color(0xFFE57373) : const Color(0xFFC62828)),
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.calendar_month,
+                    size: 18,
+                    color: Theme.of(context).hintColor,
+                  ),
+                ],
               ),
             ),
           );

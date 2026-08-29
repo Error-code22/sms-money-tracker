@@ -80,6 +80,41 @@ object Notifier {
         manager.notify(DIGEST_NOTIFICATION_ID, notification)
     }
 
+    private const val BUDGET_CHANNEL_ID = "budget_alerts"
+    private const val BUDGET_CHANNEL_NAME = "Budget alerts"
+    private const val BUDGET_NOTIFICATION_ID = 3
+
+    fun notifyBudget(context: Context, title: String, text: String) {
+        if (notificationsBlocked(context)) return
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                BUDGET_CHANNEL_ID, BUDGET_CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, BUDGET_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context)
+        }
+        val notification = builder
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(launchPendingIntent(context))
+            .setAutoCancel(true)
+            .setDefaults(Notification.DEFAULT_VIBRATE)
+            .build()
+
+        manager.notify(BUDGET_NOTIFICATION_ID, notification)
+    }
+
     private fun notificationsBlocked(context: Context): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=

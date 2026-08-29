@@ -527,6 +527,143 @@ object SmsDb {
         return "import-" + bytes.joinToString("") { "%02x".format(it) }
     }
 
+    fun getBudgetSpend(context: Context, target: String, months: Int): Double {
+        val since = if (months <= 0) {
+            0L
+        } else {
+            System.currentTimeMillis() - months * 30L * 24 * 3600 * 1000
+        }
+        val column: String
+        val value: String
+        when {
+            target.startsWith("category:") -> {
+                column = "category"
+                value = target.removePrefix("category:")
+            }
+            target.startsWith("merchant:") -> {
+                column = "counterparty"
+                value = target.removePrefix("merchant:")
+            }
+            else -> return 0.0
+        }
+        val c = db(context).rawQuery(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions " +
+                "WHERE type = 'debit' AND is_confident = 1 AND $column = ? AND ts >= ?",
+            arrayOf(value, since.toString())
+        )
+        c.use { it.moveToFirst(); return it.getDouble(0) }
+    }
+
+    fun getRecurring(context: Context, lookbackDays: Int): String {
+        val since = System.currentTimeMillis() - lookbackDays * 24L * 3600 * 1000
+        val c = db(context).rawQuery(
+            "SELECT counterparty, currency, COUNT(*) AS cnt, " +
+                "COUNT(DISTINCT strftime('%Y-%m', ts/1000, 'unixepoch', 'localtime')) AS months, " +
+                "AVG(amount) AS avg_amt " +
+                "FROM transactions WHERE type = 'debit' AND is_confident = 1 " +
+                "AND counterparty != '' AND ts >= ? " +
+                "GROUP BY counterparty, currency HAVING months >= 2 AND cnt >= 3 " +
+                "ORDER BY cnt DESC LIMIT 15",
+            arrayOf(since.toString())
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(
+                    JSONObject().apply {
+                        put("counterparty", c.getString(0))
+                        put("currency", c.getString(1) ?: "")
+                        put("count", c.getInt(2))
+                        put("months", c.getInt(3))
+                        put("average", c.getDouble(4))
+                    }
+                )
+            }
+        }
+        return arr.toString()
+    }
+
+    fun getMonthReport(context: Context, year: Int, month: Int): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val cal = Calendar.getInstance().apply {
+            set(year, month - 1, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val start = cal.timeInMillis
+        val end = start + 32L * 24 * 3600 * 1000
+        val spent = sumBetween(context, "debit", start, end, headline)
+        val received = sumBetween(context, "credit", start, end, headline)
+
+        val merchants = JSONArray()
+        database.rawQuery(
+            "SELECT counterparty, SUM(amount) AS total, COUNT(*) AS cnt FROM transactions " +
+                "WHERE type = 'debit' AND is_confident = 1 AND counterparty != '' " +
+                "AND currency = ? AND ts >= ? AND ts < ? GROUP BY counterparty " +
+                "ORDER BY total DESC LIMIT 5",
+            arrayOf(headline, start.toString(), end.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                merchants.put(
+                    JSONObject().apply {
+                        put("name", c.getString(0))
+                        put("total", c.getDouble(1))
+                        put("count", c.getInt(2))
+                    }
+                )
+            }
+        }
+
+        val categories = JSONArray()
+        database.rawQuery(
+            "SELECT category, SUM(amount) AS total, COUNT(*) AS cnt FROM transactions " +
+                "WHERE type = 'debit' AND is_confident = 1 AND category != '' " +
+                "AND currency = ? AND ts >= ? AND ts < ? GROUP BY category " +
+                "ORDER BY total DESC LIMIT 5",
+            arrayOf(headline, start.toString(), end.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                categories.put(
+                    JSONObject().apply {
+                        put("name", c.getString(0))
+                        put("total", c.getDouble(1))
+                        put("count", c.getInt(2))
+                    }
+                )
+            }
+        }
+
+        var count = 0
+        database.rawQuery(
+            "SELECT COUNT(*) FROM transactions WHERE ts >= ? AND ts < ?",
+            arrayOf(start.toString(), end.toString())
+        ).use { c ->
+            if (c.moveToFirst()) count = c.getInt(0)
+        }
+
+        return JSONObject().apply {
+            put("year", year)
+            put("month", month)
+            put("currency", headline)
+            put("spent", spent)
+            put("received", received)
+            put("count", count)
+            put("merchants", merchants)
+            put("categories", categories)
+        }.toString()
+    }
+
+    fun getWidgetStats(context: Context): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val monthStart = startOfMonth(System.currentTimeMillis())
+        return JSONObject().apply {
+            put("currency", headline)
+            put("spent", sumBy(context, "debit", monthStart, headline))
+            put("received", sumBy(context, "credit", monthStart, headline))
+        }.toString()
+    }
+
     private fun rowToJson(c: android.database.Cursor): JSONObject {
         return JSONObject().apply {
             put("id", c.getLong(c.getColumnIndexOrThrow("id")))
