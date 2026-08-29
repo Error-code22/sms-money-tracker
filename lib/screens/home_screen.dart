@@ -16,6 +16,7 @@ import '../widgets/spending_speed_card.dart';
 import '../widgets/upcoming_card.dart';
 import 'breakdown_screen.dart';
 import 'charts_screen.dart';
+import 'money_chat_screen.dart';
 import 'month_report.dart';
 import 'note_prompt.dart';
 import 'transaction_detail.dart';
@@ -392,7 +393,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               context,
               MaterialPageRoute(builder: (_) => const BreakdownScreen()),
             ),
-            icon: const Icon(Icons.bar_chart),
+            icon: const Icon(Icons.pie_chart),
+          ),
+          IconButton(
+            tooltip: 'Money chat',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MoneyChatScreen()),
+            ),
+            icon: const Icon(Icons.chat_bubble_outline),
           ),
           PopupMenuButton<String>(
             onSelected: _onMenuSelected,
