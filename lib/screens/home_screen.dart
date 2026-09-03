@@ -15,7 +15,6 @@ import '../widgets/monthly_chart.dart';
 import 'breakdown_screen.dart';
 import 'charts_screen.dart';
 import 'money_chat_screen.dart';
-import 'month_report.dart';
 import 'note_prompt.dart';
 import 'transaction_detail.dart';
 import 'transaction_form.dart';
@@ -45,6 +44,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   DateTime? _backgroundedAt;
   Timer? _timer;
   final _searchController = TextEditingController();
+  String _selectedPeriod = 'This month';
+
+  static const _periods = [
+    'This month',
+    'Last month',
+    '3 months',
+    '6 months',
+    '1 year',
+    'All time',
+  ];
 
   @override
   void initState() {
@@ -247,8 +256,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final exempt = await SmsService.isBatteryExempt();
     if (mounted) setState(() => _batteryExempt = exempt);
   }
-
-  double _get(String key) => (_summary[key] as num?)?.toDouble() ?? 0;
 
   String _fmtAmount(double value) {
     return NumberFormat('#,##0.00').format(value);
@@ -579,25 +586,86 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildSummary() {
-    final spent = _get('spentThisMonth');
-    final received = _get('receivedThisMonth');
+    final now = DateTime.now();
+    DateTime periodStart;
+    String periodLabel;
+    switch (_selectedPeriod) {
+      case 'Last month':
+        final lastMonth = DateTime(now.year, now.month - 1, 1);
+        periodStart = lastMonth;
+        periodLabel = '${_monthName(lastMonth.month)} ${lastMonth.year}';
+        break;
+      case '3 months':
+        periodStart = DateTime(now.year, now.month - 3, 1);
+        periodLabel = 'Last 3 months';
+        break;
+      case '6 months':
+        periodStart = DateTime(now.year, now.month - 6, 1);
+        periodLabel = 'Last 6 months';
+        break;
+      case '1 year':
+        periodStart = DateTime(now.year - 1, now.month, 1);
+        periodLabel = 'Last 12 months';
+        break;
+      case 'All time':
+        periodStart = DateTime(2000);
+        periodLabel = 'All time';
+        break;
+      default: // 'This month'
+        periodStart = DateTime(now.year, now.month, 1);
+        periodLabel = '${_monthName(now.month)} ${now.year}';
+    }
+
+    double spent = 0;
+    double received = 0;
+    String currency = '';
+    for (final t in _transactions) {
+      if (t.date.isBefore(periodStart)) continue;
+      if (currency.isEmpty) currency = t.currency;
+      if (t.type == 'debit') {
+        spent += t.amount;
+      } else if (t.type == 'credit') {
+        received += t.amount;
+      }
+    }
     final net = received - spent;
-    final currency = (_summary['currency'] as String?) ?? '';
-    final others = (_summary['others'] as List?) ?? const [];
 
     return Column(
       children: [
+        // Period selector
+        Row(
+          children: [
+            Icon(Icons.calendar_today, size: 16, color: Theme.of(context).hintColor),
+            const SizedBox(width: 6),
+            Expanded(
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedPeriod,
+                  isDense: true,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  items: _periods.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+                  onChanged: (v) => setState(() => _selectedPeriod = v ?? 'This month'),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         Row(
           children: [
             _SummaryCard(
-              label: 'Spent this month',
+              label: 'Spent',
               value: _fmtAmount(spent),
               color: const Color(0xFFE53935),
               icon: Icons.arrow_upward,
             ),
             const SizedBox(width: 12),
             _SummaryCard(
-              label: 'Received this month',
+              label: 'Received',
               value: _fmtAmount(received),
               color: const Color(0xFF43A047),
               icon: Icons.arrow_downward,
@@ -608,101 +676,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         Builder(builder: (context) {
           final isDark = Theme.of(context).brightness == Brightness.dark;
           final positive = net >= 0;
-          return InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MonthReportScreen()),
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            decoration: BoxDecoration(
+              color: positive
+                  ? (isDark ? const Color(0xFF1B3B24) : const Color(0xFFE8F5E9))
+                  : (isDark ? const Color(0xFF4A1E1E) : const Color(0xFFFFEBEE)),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-              decoration: BoxDecoration(
+            child: Text(
+              'Net ($periodLabel): ${positive ? '+' : ''}${_fmtAmount(net)} $currency',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
                 color: positive
-                    ? (isDark ? const Color(0xFF1B3B24) : const Color(0xFFE8F5E9))
-                    : (isDark ? const Color(0xFF4A1E1E) : const Color(0xFFFFEBEE)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Net this month ($currency): ${positive ? '+' : ''}${_fmtAmount(net)}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                        color: positive
-                            ? (isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32))
-                            : (isDark ? const Color(0xFFE57373) : const Color(0xFFC62828)),
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.calendar_month,
-                    size: 18,
-                    color: Theme.of(context).hintColor,
-                  ),
-                ],
+                    ? (isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32))
+                    : (isDark ? const Color(0xFFE57373) : const Color(0xFFC62828)),
               ),
             ),
           );
         }),
-        if (others.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _buildOtherCurrenciesCard(others),
-        ],
       ],
     );
   }
 
-  Widget _buildOtherCurrenciesCard(List others) {
-    final lines = others.map((o) {
-      final map = o as Map;
-      final cur = map['currency'] ?? '';
-      final count = map['count'] ?? 0;
-      final debit = (map['debit'] as num?)?.toDouble() ?? 0;
-      final credit = (map['credit'] as num?)?.toDouble() ?? 0;
-      return '$cur: $count tx · out ${_fmtAmount(debit)} · in ${_fmtAmount(credit)}';
-    }).join('\n');
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF3E2A14) : const Color(0xFFFFF3E0);
-    final border = isDark ? const Color(0xFFB26A00) : const Color(0xFFFFB74D);
-    final titleColor = isDark ? const Color(0xFFFFB74D) : const Color(0xFFE65100);
-    final bodyColor = isDark ? const Color(0xFFFFE0B2) : Colors.black87;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber, size: 16, color: titleColor),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'Other currencies excluded from totals above',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: titleColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(lines, style: TextStyle(fontSize: 12, color: bodyColor)),
-        ],
-      ),
-    );
+  String _monthName(int m) {
+    const names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return names[m];
   }
 
   Widget _buildChartCard() {
