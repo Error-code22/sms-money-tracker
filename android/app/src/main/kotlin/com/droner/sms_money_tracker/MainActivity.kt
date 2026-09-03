@@ -296,6 +296,20 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("export_failed", e.message, null)
                         }
                     }
+                    "removeDuplicates" -> {
+                        try {
+                            result.success(SmsDb.removeDuplicates(applicationContext))
+                        } catch (e: Exception) {
+                            result.error("dedup_failed", e.message, null)
+                        }
+                    }
+                    "recoverNotes" -> {
+                        try {
+                            result.success(SmsDb.recoverNotesFromBody(applicationContext))
+                        } catch (e: Exception) {
+                            result.error("recover_failed", e.message, null)
+                        }
+                    }
                     "isBatteryExempt" -> {
                         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                         result.success(pm.isIgnoringBatteryOptimizations(packageName))

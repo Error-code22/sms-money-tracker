@@ -465,6 +465,7 @@ object SmsDb {
             val sender = fields[6].trim()
             val body = fields[7]
             val confident = fields[8].trim() == "yes"
+            val note = if (fields.size > 9) fields[9].trim() else ""
             val ts = try {
                 dateFmt.parse(fields[0].trim())?.time ?: continue
             } catch (e: Exception) {
@@ -484,7 +485,7 @@ object SmsDb {
                 putNull("interest")
                 putNull("shape")
                 put("source", "sms")
-                putNull("note")
+                if (note.isEmpty()) putNull("note") else put("note", note)
             }
             if (db(context).insertWithOnConflict(
                     "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
@@ -780,7 +781,7 @@ object SmsDb {
         val c = db(context).query("transactions", null, null, null, null, null, "ts ASC")
         val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val sb = StringBuilder()
-        sb.append("date,type,amount,currency,category,counterparty,sender,body,confident\n")
+        sb.append("date,type,amount,currency,category,counterparty,sender,body,confident,note\n")
         c.use {
             while (c.moveToNext()) {
                 val row = listOf(
@@ -792,7 +793,8 @@ object SmsDb {
                     c.getString(c.getColumnIndexOrThrow("counterparty")),
                     c.getString(c.getColumnIndexOrThrow("sender")),
                     c.getString(c.getColumnIndexOrThrow("body")),
-                    if (c.getInt(c.getColumnIndexOrThrow("is_confident")) == 1) "yes" else "no"
+                    if (c.getInt(c.getColumnIndexOrThrow("is_confident")) == 1) "yes" else "no",
+                    c.getString(c.getColumnIndexOrThrow("note")) ?: ""
                 )
                 sb.append(row.joinToString(",") { csvEscape(it) }).append('\n')
             }
@@ -885,5 +887,62 @@ object SmsDb {
             arrayOf(type, currency, start.toString(), end.toString())
         )
         c.use { it.moveToFirst(); return it.getDouble(0) }
+    }
+
+    fun removeDuplicates(context: Context): Int {
+        val database = db(context)
+        // Find duplicate groups: same sender + amount + type + ts
+        val c = database.rawQuery(
+            "DELETE FROM transactions WHERE id NOT IN (" +
+                "SELECT MIN(id) FROM transactions GROUP BY sender, amount, type, ts" +
+            ")", null
+        )
+        val removed = c.count
+        c.close()
+        return removed
+    }
+
+    fun recoverNotesFromBody(context: Context): Int {
+        val database = db(context)
+        var updated = 0
+        // Only update transactions where note is empty but body has content
+        val c = database.rawQuery(
+            "SELECT id, body FROM transactions WHERE (note IS NULL OR note = '') AND body IS NOT NULL AND body != ''",
+            null
+        )
+        c.use {
+            while (it.moveToNext()) {
+                val id = it.getInt(0)
+                val body = it.getString(1) ?: continue
+                val note = extractNoteFromBody(body)
+                if (note.isNotEmpty()) {
+                    database.execSQL(
+                        "UPDATE transactions SET note = ? WHERE id = ?",
+                        arrayOf(note, id.toString())
+                    )
+                    updated++
+                }
+            }
+        }
+        return updated
+    }
+
+    private fun extractNoteFromBody(body: String): String {
+        // M-Pesa patterns: "to [Name] for [Purpose]" or "from [Name]"
+        val toFor = Regex("""to\s+(.+?)\s+for\s+(.+?)(?:\s+on\s|\s*$)""", RegexOption.IGNORE_CASE)
+            .find(body)
+        if (toFor != null) {
+            val name = toFor.groupValues[1].trim()
+            val purpose = toFor.groupValues[2].trim()
+            return "$purpose ($name)"
+        }
+        val toName = Regex("""to\s+(.+?)(?:\s+on\s|\s+Confirmed|\s*$)""", RegexOption.IGNORE_CASE)
+            .find(body)
+        if (toName != null) return toName.groupValues[1].trim()
+        val fromName = Regex("""from\s+(.+?)(?:\s+on\s|\s+Confirmed|\s*$)""", RegexOption.IGNORE_CASE)
+            .find(body)
+        if (fromName != null) return "From ${fromName.groupValues[1].trim()}"
+        // Fallback: take first 50 chars
+        return body.take(50).trim()
     }
 }

@@ -109,6 +109,14 @@ class SmsService {
     return await _channel.invokeMethod<String>('exportCsv') ?? '';
   }
 
+  static Future<int> removeDuplicates() async {
+    return await _channel.invokeMethod<int>('removeDuplicates') ?? 0;
+  }
+
+  static Future<int> recoverNotes() async {
+    return await _channel.invokeMethod<int>('recoverNotes') ?? 0;
+  }
+
   static Future<int> setNote(int id, String note, {String? category}) async {
     return await _channel.invokeMethod<int>('setNote', {
       'id': id,

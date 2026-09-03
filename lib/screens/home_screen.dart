@@ -306,6 +306,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const SnackBar(content: Text('Export failed')),
           );
         }
+      case 'dedup':
+        final removed = await SmsService.removeDuplicates();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Removed $removed duplicate transactions')),
+        );
+        _sync();
+      case 'recover':
+        final recovered = await SmsService.recoverNotes();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Recovered $recovered notes from SMS body')),
+        );
+        _sync();
       case 'resync':
         if (_syncing) return;
         setState(() => _syncing = true);
@@ -415,6 +429,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const PopupMenuItem(value: 'support', child: Text('Support')),
               const PopupMenuItem(value: 'settings', child: Text('Settings')),
               const PopupMenuItem(value: 'export', child: Text('Export CSV')),
+              const PopupMenuItem(value: 'dedup', child: Text('Remove duplicates')),
+              const PopupMenuItem(value: 'recover', child: Text('Recover notes from SMS')),
               PopupMenuItem(
                 value: 'resync',
                 enabled: !_syncing,
