@@ -365,6 +365,17 @@ object SmsDb {
         return arr.toString()
     }
 
+    fun getReviewCount(context: Context): Int {
+        val c = db(context).rawQuery(
+            "SELECT COUNT(*) FROM transactions WHERE is_confident = 0",
+            null
+        )
+        c.use {
+            if (it.moveToFirst()) return it.getInt(0)
+        }
+        return 0
+    }
+
     fun getCounterpartyTransactions(context: Context, counterparty: String, months: Int): String {        val since = if (months <= 0) {
             0L
         } else {
