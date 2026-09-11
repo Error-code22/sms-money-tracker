@@ -141,6 +141,10 @@ class MainActivity : FlutterFragmentActivity() {
                         val months = call.argument<Int>("months") ?: 6
                         runDb(result) { SmsDb.getMonthlyTotals(applicationContext, months) }
                     }
+                    "getWeeklyTotals" -> {
+                        val weeks = call.argument<Int>("weeks") ?: 8
+                        runDb(result) { SmsDb.getWeeklyTotals(applicationContext, weeks) }
+                    }
                     "getPeriodTotals" -> {
                         val startMs = (call.argument<Number>("startMs") ?: 0).toLong()
                         val endMs = (call.argument<Number>("endMs") ?: 0).toLong()

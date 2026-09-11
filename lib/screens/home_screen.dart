@@ -850,7 +850,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   const SizedBox(width: 12),
                   _LegendDot(
                     color: Theme.of(context).colorScheme.primary,
-                    label: 'Net',
+                    label: 'Net (In − Out)',
                   ),
                   const Spacer(),
                   Text(

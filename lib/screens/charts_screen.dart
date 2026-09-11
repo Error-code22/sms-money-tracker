@@ -15,7 +15,9 @@ class ChartsScreen extends StatefulWidget {
 }
 
 class _ChartsScreenState extends State<ChartsScreen> {
+  String _mode = 'monthly'; // monthly | weekly
   int _months = 6;
+  int _weeks = 8;
   late final int _year = DateTime.now().year;
   late final int _month = DateTime.now().month;
   List<Map<String, dynamic>> _totals = [];
@@ -35,7 +37,9 @@ class _ChartsScreenState extends State<ChartsScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final totals = await SmsService.getMonthlyTotals(months: _months);
+      final totals = _mode == 'weekly'
+          ? await SmsService.getWeeklyTotals(weeks: _weeks)
+          : await SmsService.getMonthlyTotals(months: _months);
 
       double budgetLimit = 0;
       String budgetLabel = '';
@@ -107,12 +111,16 @@ class _ChartsScreenState extends State<ChartsScreen> {
     if (index < 0 || index >= _totals.length) return;
     final t = _totals[index];
     final key = t['month'] as String;
-    final year = int.parse(key.substring(0, 4));
-    final month = int.parse(key.substring(5));
     final spent = (t['spent'] as num).toDouble();
     final received = (t['received'] as num).toDouble();
     final net = received - spent;
-    final name = DateFormat('MMMM yyyy').format(DateTime(year, month));
+    final isWeekly = key.length >= 10;
+    final name = isWeekly
+        ? 'Week of ${DateFormat('d MMM yyyy').format(DateTime.parse(key))}'
+        : DateFormat('MMMM yyyy').format(DateTime(
+            int.parse(key.substring(0, 4)),
+            int.parse(key.substring(5)),
+          ));
 
     showModalBottomSheet<void>(
       context: context,
@@ -128,26 +136,30 @@ class _ChartsScreenState extends State<ChartsScreen> {
             _popupRow('Spent', _fmt2(spent), const Color(0xFFE53935)),
             _popupRow('Received', _fmt2(received), const Color(0xFF43A047)),
             _popupRow(
-              'Net',
+              'Net (In − Out)',
               '${net >= 0 ? '+' : ''}${_fmt2(net)}',
               net >= 0 ? const Color(0xFF43A047) : const Color(0xFFE53935),
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => MonthReportScreen(year: year, month: month),
-                    ),
-                  );
-                },
-                child: const Text('View month report'),
+            if (!isWeekly)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MonthReportScreen(
+                          year: int.parse(key.substring(0, 4)),
+                          month: int.parse(key.substring(5)),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('View month report'),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -193,42 +205,69 @@ class _ChartsScreenState extends State<ChartsScreen> {
                         children: [
                           Row(
                             children: [
-                              const Expanded(
+                              Expanded(
                                 child: Text(
-                                  'Monthly',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                  _mode == 'weekly' ? 'Weekly' : 'Monthly',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
                                 ),
                               ),
-                              SegmentedButton<int>(
+                              SegmentedButton<String>(
                                 segments: const [
-                                  ButtonSegment(value: 3, label: Text('3M')),
-                                  ButtonSegment(value: 6, label: Text('6M')),
-                                  ButtonSegment(value: 12, label: Text('12M')),
+                                  ButtonSegment(value: 'monthly', label: Text('Month')),
+                                  ButtonSegment(value: 'weekly', label: Text('Week')),
                                 ],
-                                selected: {_months},
+                                selected: {_mode},
                                 showSelectedIcon: false,
                                 style: const ButtonStyle(visualDensity: VisualDensity.compact),
                                 onSelectionChanged: (selection) {
-                                  setState(() => _months = selection.first);
+                                  setState(() => _mode = selection.first);
                                   _load();
                                 },
                               ),
                             ],
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 8),
+                          if (_mode == 'monthly')
+                            SegmentedButton<int>(
+                              segments: const [
+                                ButtonSegment(value: 3, label: Text('3M')),
+                                ButtonSegment(value: 6, label: Text('6M')),
+                                ButtonSegment(value: 12, label: Text('12M')),
+                              ],
+                              selected: {_months},
+                              showSelectedIcon: false,
+                              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                              onSelectionChanged: (selection) {
+                                setState(() => _months = selection.first);
+                                _load();
+                              },
+                            )
+                          else
+                            SegmentedButton<int>(
+                              segments: const [
+                                ButtonSegment(value: 4, label: Text('4W')),
+                                ButtonSegment(value: 8, label: Text('8W')),
+                                ButtonSegment(value: 12, label: Text('12W')),
+                              ],
+                              selected: {_weeks},
+                              showSelectedIcon: false,
+                              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                              onSelectionChanged: (selection) {
+                                setState(() => _weeks = selection.first);
+                                _load();
+                              },
+                            ),
+                          const SizedBox(height: 8),
                           Row(
                             children: [
                               const _Dot(color: Color(0xFFE53935), label: 'Out'),
                               const SizedBox(width: 12),
                               const _Dot(color: Color(0xFF43A047), label: 'In'),
                               const SizedBox(width: 12),
-                              _Dot(color: primary, label: 'Net'),
-                              const Spacer(),
-                              Text(
-                                'Tap a bar',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Theme.of(context).hintColor,
+                              Flexible(
+                                child: _Dot(
+                                  color: primary,
+                                  label: 'Net (In − Out)',
                                 ),
                               ),
                             ],

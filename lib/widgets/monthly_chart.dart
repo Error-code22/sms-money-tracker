@@ -71,6 +71,15 @@ class _ChartPainter extends CustomPainter {
     return v.round().toString();
   }
 
+  /// "2026-09" → "09"; "2026-09-08" → "8" (week-start day).
+  static String _barLabel(String key) {
+    if (key.length >= 10) {
+      final day = int.tryParse(key.substring(8));
+      return day != null ? '$day' : key.substring(8);
+    }
+    return key.length >= 7 ? key.substring(5) : key;
+  }
+
   double _centerX(int i, double plotWidth, int n) =>
       MonthlyChart.leftPad + plotWidth * (i + 0.5) / n;
 
@@ -131,7 +140,7 @@ class _ChartPainter extends CustomPainter {
       if (spentH > 0) canvas.drawRRect(spentRect, spentPaint);
       if (receivedH > 0) canvas.drawRRect(receivedRect, receivedPaint);
 
-      final label = (t['month'] as String).substring(5);
+      final label = _barLabel(t['month'] as String);
       final tp = TextPainter(
         text: TextSpan(text: label, style: monthLabelStyle),
         textDirection: TextDirection.ltr,
@@ -142,12 +151,18 @@ class _ChartPainter extends CustomPainter {
       );
     }
 
-    // Net line (received - spent) per month.
+    // Net line (received - spent) per period — separate scale, zero at mid-height.
     final netValues = totals
         .map((t) => (t['received'] as num).toDouble() - (t['spent'] as num).toDouble())
         .toList();
     final foldedNet = netValues.fold(0.0, (m, v) => math.max(m, v.abs()));
     final maxAbsNet = foldedNet == 0 ? 1.0 : foldedNet;
+    // Faint zero baseline so "above = surplus, below = deficit" is readable.
+    final zeroY = topPad + chartHeight / 2;
+    final zeroPaint = Paint()
+      ..color = netColor.withValues(alpha: 0.25)
+      ..strokeWidth = 1;
+    canvas.drawLine(Offset(leftPad, zeroY), Offset(size.width, zeroY), zeroPaint);
     final netPaint = Paint()
       ..color = netColor
       ..strokeWidth = 2
@@ -157,7 +172,7 @@ class _ChartPainter extends CustomPainter {
     for (var i = 0; i < netValues.length; i++) {
       points.add(Offset(
         _centerX(i, plotWidth, n),
-        topPad + chartHeight / 2 - (netValues[i] / maxAbsNet) * (chartHeight / 2),
+        zeroY - (netValues[i] / maxAbsNet) * (chartHeight / 2),
       ));
     }
     if (points.length > 1) {

@@ -43,6 +43,12 @@ class SmsService {
     return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
+  static Future<List<Map<String, dynamic>>> getWeeklyTotals({int weeks = 8}) async {
+    final raw = await _channel.invokeMethod<String>('getWeeklyTotals', {'weeks': weeks});
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<List<Map<String, dynamic>>> getTopCounterparties({int months = 1}) async {
     final raw = await _channel.invokeMethod<String>('getTopCounterparties', {'months': months});
     if (raw == null || raw.isEmpty) return [];

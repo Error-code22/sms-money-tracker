@@ -10,6 +10,8 @@ import android.provider.MediaStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -483,17 +485,25 @@ object SmsDb {
         val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val database = db(context)
         for ((index, line) in csv.lineSequence().withIndex()) {
-            if (index == 0 && line.startsWith("date,")) continue
-            val fields = parseCsvLine(line)
+            val stripped = line.removePrefix("﻿")
+            if (index == 0 && stripped.startsWith("Date,", ignoreCase = true)) continue
+            if (index == 0 && stripped.startsWith("date,", ignoreCase = true)) continue
+            val fields = parseCsvLine(stripped)
             if (fields.size < 9) continue
-            val type = if (fields[1].trim() == "credit") "credit" else "debit"
+            val dir = fields[1].trim().lowercase(Locale.US)
+            val type = when {
+                dir == "credit" || dir == "money in" -> "credit"
+                dir == "debit" || dir == "money out" -> "debit"
+                else -> "debit"
+            }
             val amount = fields[2].trim().toDoubleOrNull() ?: continue
             val currency = fields[3].trim()
             val category = fields[4].trim()
             val counterparty = fields[5].trim()
             val sender = fields[6].trim()
             val body = fields[7]
-            val confident = fields[8].trim() == "yes"
+            val confident = fields[8].trim().equals("yes", ignoreCase = true) ||
+                fields[8].trim() == "1"
             val note = if (fields.size > 9) fields[9].trim() else ""
             val ts = try {
                 dateFmt.parse(fields[0].trim())?.time ?: continue
@@ -861,6 +871,64 @@ object SmsDb {
         return arr.toString()
     }
 
+    fun getWeeklyTotals(context: Context, weeks: Int): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+        // Monday-start week buckets for the last N weeks (including current).
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        while (cal.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) {
+            cal.add(Calendar.DAY_OF_MONTH, -1)
+        }
+        cal.add(Calendar.WEEK_OF_YEAR, -(weeks - 1))
+
+        val keys = ArrayList<String>(weeks)
+        val walk = cal.clone() as Calendar
+        for (i in 0 until weeks) {
+            keys.add(dateFmt.format(walk.time))
+            walk.add(Calendar.WEEK_OF_YEAR, 1)
+        }
+        val since = cal.timeInMillis
+        val endExclusive = walk.timeInMillis
+
+        val byWeek = LinkedHashMap<String, Pair<Double, Double>>()
+        for (key in keys) byWeek[key] = 0.0 to 0.0
+
+        database.rawQuery(
+            "SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch', 'localtime', 'weekday 1', '-6 days') AS wk, " +
+                "COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) " +
+                "FROM transactions " +
+                "WHERE currency = ? AND is_confident = 1 AND ts >= ? AND ts < ? " +
+                "GROUP BY wk",
+            arrayOf(headline, since.toString(), endExclusive.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                val wk = c.getString(0) ?: continue
+                byWeek[wk] = c.getDouble(1) to c.getDouble(2)
+            }
+        }
+
+        val arr = JSONArray()
+        for (key in keys) {
+            val pair = byWeek[key] ?: (0.0 to 0.0)
+            arr.put(
+                JSONObject().apply {
+                    put("month", key)
+                    put("spent", pair.first)
+                    put("received", pair.second)
+                }
+            )
+        }
+        return arr.toString()
+    }
+
     fun getPeriodTotals(context: Context, startMs: Long, endMs: Long): String {
         val database = db(context)
         val headline = headlineCurrency(database)
@@ -888,28 +956,41 @@ object SmsDb {
     fun exportCsv(context: Context): String {
         val c = db(context).query("transactions", null, null, null, null, null, "ts ASC")
         val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val amountFmt = DecimalFormat("0.##", DecimalFormatSymbols(Locale.US))
         val sb = StringBuilder()
-        sb.append("date,type,amount,currency,category,counterparty,sender,body,confident,note\n")
+        // Friendly headers for Excel; column order kept for import round-trip.
+        sb.append("Date,Direction,Amount,Currency,Category,Counterparty,Sender,Message,Confirmed,Note,Balance\n")
         c.use {
             while (c.moveToNext()) {
+                val type = c.getString(c.getColumnIndexOrThrow("type"))
+                val direction = when (type) {
+                    "credit" -> "Money in"
+                    "debit" -> "Money out"
+                    else -> type
+                }
+                val balanceIdx = c.getColumnIndex("balance")
+                val balanceRaw = if (balanceIdx >= 0 && !c.isNull(balanceIdx)) c.getDouble(balanceIdx) else null
                 val row = listOf(
                     dateFmt.format(Date(c.getLong(c.getColumnIndexOrThrow("ts")))),
-                    c.getString(c.getColumnIndexOrThrow("type")),
-                    c.getDouble(c.getColumnIndexOrThrow("amount")).toString(),
+                    direction,
+                    amountFmt.format(c.getDouble(c.getColumnIndexOrThrow("amount"))),
                     c.getString(c.getColumnIndexOrThrow("currency")),
-                    c.getString(c.getColumnIndexOrThrow("category")),
-                    c.getString(c.getColumnIndexOrThrow("counterparty")),
-                    c.getString(c.getColumnIndexOrThrow("sender")),
-                    c.getString(c.getColumnIndexOrThrow("body")),
-                    if (c.getInt(c.getColumnIndexOrThrow("is_confident")) == 1) "yes" else "no",
-                    c.getString(c.getColumnIndexOrThrow("note")) ?: ""
+                    c.getString(c.getColumnIndexOrThrow("category")) ?: "",
+                    c.getString(c.getColumnIndexOrThrow("counterparty")) ?: "",
+                    c.getString(c.getColumnIndexOrThrow("sender")) ?: "",
+                    flattenBody(c.getString(c.getColumnIndexOrThrow("body"))),
+                    if (c.getInt(c.getColumnIndexOrThrow("is_confident")) == 1) "Yes" else "No",
+                    c.getString(c.getColumnIndexOrThrow("note")) ?: "",
+                    balanceRaw?.let { amountFmt.format(it) } ?: ""
                 )
-                sb.append(row.joinToString(",") { csvEscape(it) }).append('\n')
+                sb.append(row.joinToString(",") { csvEscape(it) }).append("\r\n")
             }
         }
 
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val fileName = "money-tracker-export-$stamp.csv"
+        // UTF-8 BOM so Excel detects encoding and shows a clean sheet.
+        val content = "﻿" + sb.toString()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -918,19 +999,28 @@ object SmsDb {
             }
             val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             if (uri == null) {
-                writeToAppFiles(context, fileName, sb.toString())
+                writeToAppFiles(context, fileName, content)
             } else {
                 val stream = context.contentResolver.openOutputStream(uri)
                 if (stream == null) {
-                    writeToAppFiles(context, fileName, sb.toString())
+                    writeToAppFiles(context, fileName, content)
                 } else {
-                    stream.use { it.write(sb.toString().toByteArray()) }
+                    stream.use { it.write(content.toByteArray(Charsets.UTF_8)) }
                     "Downloads/$fileName"
                 }
             }
         } else {
-            writeToAppFiles(context, fileName, sb.toString())
+            writeToAppFiles(context, fileName, content)
         }
+    }
+
+    private fun flattenBody(body: String?): String {
+        return (body ?: "")
+            .replace("\r\n", " ")
+            .replace('\n', ' ')
+            .replace('\r', ' ')
+            .replace('\t', ' ')
+            .trim()
     }
 
     private fun csvEscape(field: String?): String {
