@@ -15,6 +15,8 @@ import '../widgets/monthly_chart.dart';
 import 'breakdown_screen.dart';
 import 'charts_screen.dart';
 import 'money_chat_screen.dart';
+import 'batch_note_screen.dart';
+import 'csv_screen.dart';
 import 'note_prompt.dart';
 import 'transaction_detail.dart';
 import 'transaction_form.dart';
@@ -43,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _lockGrace = 30;
   DateTime? _backgroundedAt;
   Timer? _timer;
+  Timer? _searchDebounce;
   final _searchController = TextEditingController();
   String _selectedPeriod = 'This month';
 
@@ -110,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -241,6 +245,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _loadTransactions() async {
+    final txs = await SmsService.getTransactions(filter: _filter, query: _query);
+    if (!mounted) return;
+    setState(() {
+      _transactions = txs.map(MoneyTransaction.fromJson).toList();
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      _query = value.trim();
+      _loadTransactions();
+    });
+  }
+
   Future<void> _requestSmsPermission() async {
     final status = await Permission.sms.request();
     setState(() => _smsStatus = status);
@@ -284,6 +304,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             await _load();
           },
         );
+      case 'csv':
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CsvScreen()),
+        );
+        _load();
       case 'export':
         try {
           final path = await SmsService.exportCsv();
@@ -313,11 +339,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           SnackBar(content: Text('Removed $removed duplicate transactions')),
         );
         _sync();
-      case 'recover':
-        final recovered = await SmsService.recoverNotes();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Recovered $recovered notes from SMS body')),
+      case 'batchnotes':
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const BatchNoteScreen()),
         );
         _sync();
       case 'resync':
@@ -325,6 +350,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         setState(() => _syncing = true);
         try {
           await SmsService.resetSyncState();
+          await SmsService.sync();
           await _load();
         } catch (_) {
           if (!mounted) return;
@@ -428,9 +454,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const PopupMenuItem(value: 'about', child: Text('About')),
               const PopupMenuItem(value: 'support', child: Text('Support')),
               const PopupMenuItem(value: 'settings', child: Text('Settings')),
+              const PopupMenuItem(value: 'csv', child: Text('View transactions')),
               const PopupMenuItem(value: 'export', child: Text('Export CSV')),
               const PopupMenuItem(value: 'dedup', child: Text('Remove duplicates')),
-              const PopupMenuItem(value: 'recover', child: Text('Recover notes from SMS')),
+              const PopupMenuItem(value: 'batchnotes', child: Text('Edit notes by month')),
               PopupMenuItem(
                 value: 'resync',
                 enabled: !_syncing,
@@ -449,29 +476,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         bottom: true,
         child: RefreshIndicator(
           onRefresh: _sync,
-          child: ListView(
+          child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (needSetup) _buildSetupCard(),
-              if (_showBackupNudge) ...[
-                const SizedBox(height: 8),
-                _buildBackupNudge(),
-              ],
-              if (_reviewCount > 0 && _filter != 'review') ...[
-                const SizedBox(height: 8),
-                _buildReviewBanner(),
-              ],
-              const SizedBox(height: 8),
-              _buildSummary(),
-              const SizedBox(height: 16),
-              const BudgetsCard(),
-              const SizedBox(height: 16),
-              _buildChartCard(),
-              const SizedBox(height: 16),
-              _buildFilters(),
-              const SizedBox(height: 8),
-              _buildTransactionList(),
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.all(16),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    if (needSetup) _buildSetupCard(),
+                    if (_showBackupNudge) ...[
+                      const SizedBox(height: 8),
+                      _buildBackupNudge(),
+                    ],
+                    if (_reviewCount > 0 && _filter != 'review') ...[
+                      const SizedBox(height: 8),
+                      _buildReviewBanner(),
+                    ],
+                    const SizedBox(height: 8),
+                    _buildSummary(),
+                    const SizedBox(height: 16),
+                    const BudgetsCard(),
+                    const SizedBox(height: 16),
+                    _buildChartCard(),
+                    const SizedBox(height: 16),
+                    _buildFilters(),
+                    const SizedBox(height: 8),
+                    if (_transactions.isNotEmpty)
+                      Text(
+                        '${_transactions.length} transactions',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                    if (_transactions.isNotEmpty) const SizedBox(height: 8),
+                  ]),
+                ),
+              ),
+              if (_transactions.isEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverToBoxAdapter(child: _buildEmptyTransactions()),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final tx = _transactions[index];
+                        return _TransactionTile(
+                          tx: tx,
+                          reviewMode: _filter == 'review',
+                          onTap: () => showTransactionDetail(context, tx, onChanged: _load),
+                          onConfirm: () => _reviewAction(tx, confirm: true),
+                          onNotMoney: () => _reviewAction(tx, confirm: false),
+                        );
+                      },
+                      childCount: _transactions.length,
+                    ),
+                  ),
+                ),
+              const SliverToBoxAdapter(child: SizedBox(height: 88)),
             ],
           ),
         ),
@@ -713,6 +776,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
         }),
+        // M-Pesa balance bar
+        if (_summary['balance'] != null) ...[
+          const SizedBox(height: 8),
+          Builder(builder: (context) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final bal = (_summary['balance'] as num?)?.toDouble();
+            if (bal == null) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF3E2A14) : const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.account_balance_wallet, size: 16, color: isDark ? Colors.amber : Colors.orange[800]),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Balance: Ksh ${_fmtAmount(bal)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: isDark ? Colors.amber : Colors.orange[800],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ],
     );
   }
@@ -787,7 +881,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           selected: selected,
           onSelected: (_) {
             setState(() => _filter = value);
-            _load();
+            _loadTransactions();
           },
         ),
       );
@@ -795,13 +889,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return Column(
       children: [
-        Row(
-          children: [
-            chip('all', 'All'),
-            chip('debit', 'Money out'),
-            chip('credit', 'Money in'),
-            chip('review', _reviewCount > 0 ? 'Review ($_reviewCount)' : 'Review'),
-          ],
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              chip('all', 'All'),
+              chip('debit', 'Money out'),
+              chip('credit', 'Money in'),
+              chip('review', _reviewCount > 0 ? 'Review ($_reviewCount)' : 'Review'),
+            ],
+          ),
         ),
         const SizedBox(height: 8),
         TextField(
@@ -812,50 +909,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             border: OutlineInputBorder(),
             isDense: true,
           ),
-          onChanged: (value) {
-            _query = value.trim();
-            _load();
-          },
+          onChanged: _onSearchChanged,
         ),
       ],
     );
   }
 
-  Widget _buildTransactionList() {
-    if (_transactions.isEmpty) {
-      final inReview = _filter == 'review';
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        child: Center(
-          child: Text(
-            inReview
-                ? 'Nothing to review. You are all caught up.'
-                : 'No transactions found yet.\nPull down to sync, or wait for the next SMS.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Theme.of(context).hintColor),
-          ),
+  Widget _buildEmptyTransactions() {
+    final inReview = _filter == 'review';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Text(
+          inReview
+              ? 'Nothing to review. You are all caught up.'
+              : 'No transactions found yet.\nPull down to sync, or wait for the next SMS.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Theme.of(context).hintColor),
         ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${_transactions.length} transactions',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        const SizedBox(height: 8),
-        ..._transactions.map(
-          (tx) => _TransactionTile(
-            tx: tx,
-            reviewMode: _filter == 'review',
-            onTap: () => showTransactionDetail(context, tx, onChanged: _load),
-            onConfirm: () => _reviewAction(tx, confirm: true),
-            onNotMoney: () => _reviewAction(tx, confirm: false),
-          ),
-        ),
-      ],
+      ),
     );
   }
 

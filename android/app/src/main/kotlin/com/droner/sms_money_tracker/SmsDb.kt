@@ -16,7 +16,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 3) {
+class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -60,6 +60,7 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
             )
             """.trimIndent()
         )
+        createIndexes(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -93,6 +94,21 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
             db.execSQL("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'sms'")
             db.execSQL("ALTER TABLE transactions ADD COLUMN note TEXT")
         }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE transactions ADD COLUMN balance REAL")
+        }
+        if (oldVersion < 5) {
+            createIndexes(db)
+        }
+    }
+
+    private fun createIndexes(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_ts ON transactions(ts)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_type_ts ON transactions(type, ts)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_conf_ts ON transactions(is_confident, ts)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_currency_ts ON transactions(currency, ts)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_cp ON transactions(counterparty)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_cat ON transactions(category)")
     }
 }
 
@@ -126,6 +142,7 @@ object SmsDb {
             put("category", txn.category)
             put("interest", txn.interest)
             put("shape", shape)
+            put("balance", txn.balance)
         }
         return database.insertWithOnConflict(
             "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
@@ -453,6 +470,7 @@ object SmsDb {
     fun importCsv(context: Context, csv: String): Int {
         var imported = 0
         val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val database = db(context)
         for ((index, line) in csv.lineSequence().withIndex()) {
             if (index == 0 && line.startsWith("date,")) continue
             val fields = parseCsvLine(line)
@@ -471,6 +489,17 @@ object SmsDb {
             } catch (e: Exception) {
                 continue
             }
+            // Skip if same sender + amount + type + same day already exists
+            val dayStart = ts / 86400000
+            val check = database.rawQuery(
+                "SELECT COUNT(*) FROM transactions WHERE sender = ? AND amount = ? AND type = ? AND ts / 86400000 = ?",
+                arrayOf(sender, amount.toString(), type, dayStart.toString())
+            )
+            check.moveToFirst()
+            val exists = check.getInt(0) > 0
+            check.close()
+            if (exists) continue
+
             val values = ContentValues().apply {
                 put("sms_id", importId(sender, body, ts))
                 put("sender", sender)
@@ -487,7 +516,7 @@ object SmsDb {
                 put("source", "sms")
                 if (note.isEmpty()) putNull("note") else put("note", note)
             }
-            if (db(context).insertWithOnConflict(
+            if (database.insertWithOnConflict(
                     "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
                 ) != -1L
             ) {
@@ -570,12 +599,12 @@ object SmsDb {
             set(Calendar.MILLISECOND, 0)
         }
         val start = cal.timeInMillis
-        val end = start + 32L * 24 * 3600 * 1000
+        val end = startOfNextMonth(start)
         val c = db(context).rawQuery(
             "SELECT CAST(strftime('%d', ts/1000, 'unixepoch', 'localtime') AS INTEGER) AS day, " +
-                "SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), " +
-                "SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) " +
-                "FROM transactions WHERE currency = ? AND ts >= ? AND ts < ? " +
+                "COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) " +
+                "FROM transactions WHERE currency = ? AND is_confident = 1 AND ts >= ? AND ts < ? " +
                 "GROUP BY day ORDER BY day",
             arrayOf(headline, start.toString(), end.toString())
         )
@@ -631,7 +660,7 @@ object SmsDb {
             set(Calendar.MILLISECOND, 0)
         }
         val start = cal.timeInMillis
-        val end = start + 32L * 24 * 3600 * 1000
+        val end = startOfNextMonth(start)
         val spent = sumBetween(context, "debit", start, end, headline)
         val received = sumBetween(context, "credit", start, end, headline)
 
@@ -732,7 +761,7 @@ object SmsDb {
             "SELECT currency, COUNT(*) AS cnt, " +
                 "SUM(CASE WHEN type='debit' THEN amount ELSE 0 END) AS debit, " +
                 "SUM(CASE WHEN type='credit' THEN amount ELSE 0 END) AS credit " +
-                "FROM transactions WHERE currency != ? GROUP BY currency ORDER BY cnt DESC",
+                "FROM transactions WHERE currency != ? AND is_confident = 1 GROUP BY currency ORDER BY cnt DESC",
             arrayOf(headline)
         ).use { c ->
             while (c.moveToNext()) {
@@ -753,28 +782,96 @@ object SmsDb {
             put("receivedThisMonth", sumBy(context, "credit", monthStart, headline))
             put("spentTotal", sumBy(context, "debit", 0L, headline))
             put("receivedTotal", sumBy(context, "credit", 0L, headline))
+            put("balance", getLatestBalance(context))
             put("others", others)
         }.toString()
     }
 
+    fun getLatestBalance(context: Context): Double? {
+        val c = db(context).rawQuery(
+            "SELECT balance FROM transactions WHERE balance IS NOT NULL ORDER BY ts DESC LIMIT 1",
+            null
+        )
+        c.use {
+            if (it.moveToFirst()) return it.getDouble(0)
+        }
+        return null
+    }
+
     fun getMonthlyTotals(context: Context, months: Int): String {
-        val headline = headlineCurrency(db(context))
-        val arr = JSONArray()
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val endExclusive = startOfNextMonth(System.currentTimeMillis())
+
+        val keys = ArrayList<String>(months)
         val cal = Calendar.getInstance()
         for (i in months - 1 downTo 0) {
-            val start = startOfMonth(cal.timeInMillis)
-            val end = start + 32L * 24 * 3600 * 1000
-            val monthKey = "%04d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
-            arr.put(
-                JSONObject().apply {
-                    put("month", monthKey)
-                    put("spent", sumBetween(context, "debit", start, end, headline))
-                    put("received", sumBetween(context, "credit", start, end, headline))
-                }
-            )
+            keys.add("%04d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1))
             cal.add(Calendar.MONTH, -1)
         }
+        keys.reverse()
+
+        val since = startOfMonth(
+            Calendar.getInstance().apply {
+                timeInMillis = System.currentTimeMillis()
+                add(Calendar.MONTH, -(months - 1))
+            }.timeInMillis
+        )
+
+        val byMonth = LinkedHashMap<String, Pair<Double, Double>>()
+        for (key in keys) byMonth[key] = 0.0 to 0.0
+
+        database.rawQuery(
+            "SELECT strftime('%Y-%m', ts/1000, 'unixepoch', 'localtime') AS m, " +
+                "COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) " +
+                "FROM transactions " +
+                "WHERE currency = ? AND is_confident = 1 AND ts >= ? AND ts < ? " +
+                "GROUP BY m",
+            arrayOf(headline, since.toString(), endExclusive.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                val m = c.getString(0) ?: continue
+                byMonth[m] = c.getDouble(1) to c.getDouble(2)
+            }
+        }
+
+        val arr = JSONArray()
+        for (key in keys) {
+            val pair = byMonth[key] ?: (0.0 to 0.0)
+            arr.put(
+                JSONObject().apply {
+                    put("month", key)
+                    put("spent", pair.first)
+                    put("received", pair.second)
+                }
+            )
+        }
         return arr.toString()
+    }
+
+    fun getPeriodTotals(context: Context, startMs: Long, endMs: Long): String {
+        val database = db(context)
+        val headline = headlineCurrency(database)
+        val start = if (startMs > 0) startMs else 0L
+        val end = if (endMs > 0) endMs else System.currentTimeMillis() + 1
+        val c = database.rawQuery(
+            "SELECT " +
+                "COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) " +
+                "FROM transactions " +
+                "WHERE currency = ? AND is_confident = 1 AND ts >= ? AND ts < ?",
+            arrayOf(headline, start.toString(), end.toString())
+        )
+        val result = c.use {
+            it.moveToFirst()
+            Pair(it.getDouble(0), it.getDouble(1))
+        }
+        return JSONObject().apply {
+            put("currency", headline)
+            put("spent", result.first)
+            put("received", result.second)
+        }.toString()
     }
 
     fun exportCsv(context: Context): String {
@@ -861,11 +958,17 @@ object SmsDb {
         return cal.timeInMillis
     }
 
+    private fun startOfNextMonth(time: Long): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = startOfMonth(time) }
+        cal.add(Calendar.MONTH, 1)
+        return cal.timeInMillis
+    }
+
     private fun sumBy(context: Context, type: String, since: Long, currency: String): Double {
         val where = if (since > 0) {
-            "type = ? AND currency = ? AND ts >= ?"
+            "type = ? AND currency = ? AND is_confident = 1 AND ts >= ?"
         } else {
-            "type = ? AND currency = ?"
+            "type = ? AND currency = ? AND is_confident = 1"
         }
         val args = if (since > 0) {
             arrayOf(type, currency, since.toString())
@@ -883,7 +986,7 @@ object SmsDb {
     ): Double {
         val c = db(context).rawQuery(
             "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions " +
-                "WHERE type = ? AND currency = ? AND ts >= ? AND ts < ?",
+                "WHERE type = ? AND currency = ? AND is_confident = 1 AND ts >= ? AND ts < ?",
             arrayOf(type, currency, start.toString(), end.toString())
         )
         c.use { it.moveToFirst(); return it.getDouble(0) }
@@ -891,15 +994,24 @@ object SmsDb {
 
     fun removeDuplicates(context: Context): Int {
         val database = db(context)
-        // Find duplicate groups: same sender + amount + type + ts
-        val c = database.rawQuery(
-            "DELETE FROM transactions WHERE id NOT IN (" +
-                "SELECT MIN(id) FROM transactions GROUP BY sender, amount, type, ts" +
+        // More aggressive: match same sender + amount + type + same day
+        val countC = database.rawQuery(
+            "SELECT COUNT(*) FROM transactions WHERE id NOT IN (" +
+                "SELECT MIN(id) FROM transactions " +
+                "GROUP BY sender, amount, type, ts / 86400000" +
             ")", null
         )
-        val removed = c.count
-        c.close()
-        return removed
+        countC.moveToFirst()
+        val count = countC.getInt(0)
+        countC.close()
+        // Delete duplicates
+        database.execSQL(
+            "DELETE FROM transactions WHERE id NOT IN (" +
+                "SELECT MIN(id) FROM transactions " +
+                "GROUP BY sender, amount, type, ts / 86400000" +
+            ")"
+        )
+        return count
     }
 
     fun recoverNotesFromBody(context: Context): Int {

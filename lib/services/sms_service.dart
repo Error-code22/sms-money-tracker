@@ -27,6 +27,16 @@ class SmsService {
     return jsonDecode(raw) as Map<String, dynamic>;
   }
 
+  static Future<double?> getLatestBalance() async {
+    return await _channel.invokeMethod<double?>('getLatestBalance');
+  }
+
+  static Future<Map<String, dynamic>> getSummaryFromSms() async {
+    final raw = await _channel.invokeMethod<String>('getSummaryFromSms');
+    if (raw == null || raw.isEmpty) return {};
+    return jsonDecode(raw) as Map<String, dynamic>;
+  }
+
   static Future<List<Map<String, dynamic>>> getMonthlyTotals({int months = 6}) async {
     final raw = await _channel.invokeMethod<String>('getMonthlyTotals', {'months': months});
     if (raw == null || raw.isEmpty) return [];

@@ -95,4 +95,77 @@ object SmsSync {
         }
         return list
     }
+
+    fun getLatestBalance(context: Context): Double? {
+        val cr: ContentResolver = context.contentResolver
+        val uri = Uri.parse("content://sms/inbox")
+        val cursor = cr.query(uri, arrayOf("body"), "address = 'MPESA'", null, "date DESC")
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val body = it.getString(0) ?: return null
+                val match = Regex("balance\\s+is\\s+Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
+                    .find(body) ?: return null
+                return match.groupValues[1].replace(",", "").toDoubleOrNull()
+            }
+        }
+        return null
+    }
+
+    fun getSummaryFromSms(context: Context): String? {
+        val cr: ContentResolver = context.contentResolver
+        val uri = Uri.parse("content://sms/inbox")
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val monthStart = cal.timeInMillis
+
+        var spent = 0.0
+        var received = 0.0
+        var balance: Double? = null
+
+        // Read all MPESA SMS
+        val cursor = cr.query(uri, arrayOf("body", "date"), "address = 'MPESA'", null, "date DESC")
+        cursor?.use {
+            val bodyIdx = it.getColumnIndex("body")
+            while (it.moveToNext()) {
+                val body = it.getString(bodyIdx) ?: continue
+                // Skip non-transaction messages
+                if (!body.contains("Confirmed", ignoreCase = true)) continue
+
+                // Extract amount
+                val amtMatch = Regex("Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
+                    .find(body) ?: continue
+                val amount = amtMatch.groupValues[1].replace(",", "").toDoubleOrNull() ?: continue
+
+                // Determine type
+                val isCredit = body.contains("received", ignoreCase = true)
+                val isDebit = body.contains("sent to", ignoreCase = true) ||
+                    body.contains("paid to", ignoreCase = true) ||
+                    body.contains("withdrawn", ignoreCase = true) ||
+                    body.contains("bought", ignoreCase = true) ||
+                    body.contains("used", ignoreCase = true)
+
+                if (isCredit) received += amount
+                else if (isDebit) spent += amount
+
+                // Extract balance (first one is latest)
+                if (balance == null) {
+                    val balMatch = Regex("balance\\s+is\\s+Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
+                        .find(body)
+                    if (balMatch != null) {
+                        balance = balMatch.groupValues[1].replace(",", "").toDoubleOrNull()
+                    }
+                }
+            }
+        }
+
+        return org.json.JSONObject().apply {
+            put("spentThisMonth", spent)
+            put("receivedThisMonth", received)
+            put("balance", balance)
+        }.toString()
+    }
 }

@@ -62,6 +62,19 @@ class MainActivity : FlutterFragmentActivity() {
         private const val REQUEST_IMPORT_CSV = 1001
     }
 
+    /** Run SQLite work off the platform/UI thread; deliver the result on the UI thread. */
+    private fun runDb(result: MethodChannel.Result, block: () -> Any?) {
+        syncExecutor.execute {
+            try {
+                val value = block()
+                runOnUiThread { result.success(value) }
+            } catch (e: Exception) {
+                DebugLog.exception(applicationContext, "MainActivity", e)
+                runOnUiThread { result.error("query_failed", e.message, null) }
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         AppForegroundState.isForeground = true
@@ -92,99 +105,77 @@ class MainActivity : FlutterFragmentActivity() {
                     "getTransactions" -> {
                         val filter = call.argument<String>("filter") ?: "all"
                         val query = call.argument<String>("query") ?: ""
+                        runDb(result) { SmsDb.getTransactions(applicationContext, filter, query) }
+                    }
+                    "getSummary" -> {
+                        runDb(result) { SmsDb.getSummary(applicationContext) }
+                    }
+                    "getLatestBalance" -> {
                         try {
-                            result.success(SmsDb.getTransactions(applicationContext, filter, query))
+                            result.success(SmsSync.getLatestBalance(applicationContext))
                         } catch (e: Exception) {
                             result.error("query_failed", e.message, null)
                         }
                     }
-                    "getSummary" -> {
+                    "getSummaryFromSms" -> {
                         try {
-                            result.success(SmsDb.getSummary(applicationContext))
+                            result.success(SmsSync.getSummaryFromSms(applicationContext))
                         } catch (e: Exception) {
                             result.error("query_failed", e.message, null)
                         }
                     }
                     "getMonthlyTotals" -> {
                         val months = call.argument<Int>("months") ?: 6
-                        try {
-                            result.success(SmsDb.getMonthlyTotals(applicationContext, months))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getMonthlyTotals(applicationContext, months) }
+                    }
+                    "getPeriodTotals" -> {
+                        val startMs = (call.argument<Number>("startMs") ?: 0).toLong()
+                        val endMs = (call.argument<Number>("endMs") ?: 0).toLong()
+                        runDb(result) { SmsDb.getPeriodTotals(applicationContext, startMs, endMs) }
+                    }
+                    "getReviewCount" -> {
+                        runDb(result) { SmsDb.getReviewCount(applicationContext) }
                     }
                     "getTopCounterparties" -> {
                         val months = call.argument<Int>("months") ?: 1
-                        try {
-                            result.success(SmsDb.getTopCounterparties(applicationContext, months))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getTopCounterparties(applicationContext, months) }
                     }
                     "getCounterpartyTransactions" -> {
                         val counterparty = call.argument<String>("counterparty") ?: ""
                         val months = call.argument<Int>("months") ?: 1
-                        try {
-                            result.success(
-                                SmsDb.getCounterpartyTransactions(applicationContext, counterparty, months)
-                            )
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
+                        runDb(result) {
+                            SmsDb.getCounterpartyTransactions(applicationContext, counterparty, months)
                         }
                     }
                     "getTopCategories" -> {
                         val months = call.argument<Int>("months") ?: 1
-                        try {
-                            result.success(SmsDb.getTopCategories(applicationContext, months))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getTopCategories(applicationContext, months) }
                     }
                     "getCategoryTransactions" -> {
                         val category = call.argument<String>("category") ?: ""
                         val months = call.argument<Int>("months") ?: 1
-                        try {
-                            result.success(
-                                SmsDb.getCategoryTransactions(applicationContext, category, months)
-                            )
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
+                        runDb(result) {
+                            SmsDb.getCategoryTransactions(applicationContext, category, months)
                         }
                     }
                     "getBudgetSpend" -> {
                         val target = call.argument<String>("target") ?: ""
                         val months = call.argument<Int>("months") ?: 1
-                        try {
-                            result.success(SmsDb.getBudgetSpend(applicationContext, target, months))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getBudgetSpend(applicationContext, target, months) }
                     }
                     "getRecurring" -> {
                         val lookbackDays = call.argument<Int>("lookbackDays") ?: 90
-                        try {
-                            result.success(SmsDb.getRecurring(applicationContext, lookbackDays))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getRecurring(applicationContext, lookbackDays) }
                     }
                     "getMonthReport" -> {
                         val year = call.argument<Int>("year") ?: 2026
                         val month = call.argument<Int>("month") ?: 1
-                        try {
-                            result.success(SmsDb.getMonthReport(applicationContext, year, month))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getMonthReport(applicationContext, year, month) }
                     }
                     "getDailyTotals" -> {
                         val year = call.argument<Int>("year") ?: 2026
                         val month = call.argument<Int>("month") ?: 1
-                        try {
-                            result.success(SmsDb.getDailyTotals(applicationContext, year, month))
-                        } catch (e: Exception) {
-                            result.error("query_failed", e.message, null)
-                        }
+                        runDb(result) { SmsDb.getDailyTotals(applicationContext, year, month) }
                     }
                     "updateWidget" -> {
                         try {

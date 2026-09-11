@@ -14,7 +14,8 @@ data class Txn(
     val ts: Long,
     val category: String? = null,
     val interest: Double? = null,
-    val isConfident: Boolean = false
+    val isConfident: Boolean = false,
+    val balance: Double? = null
 )
 
 object SmsParser {
@@ -118,13 +119,15 @@ object SmsParser {
         sendPattern.find(core)?.let { m ->
             val amount = parseAmount(m.groupValues[1]) ?: return null
             return Txn(sms.id, sms.sender, body, amount, "KES", "debit",
-                m.groupValues[2].trim(), sms.date, isConfident = true)
+                m.groupValues[2].trim(), sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         receivePattern.find(core)?.let { m ->
             val amount = parseAmount(m.groupValues[1]) ?: return null
             return Txn(sms.id, sms.sender, body, amount, "KES", "credit",
-                m.groupValues[2].trim(), sms.date, isConfident = true)
+                m.groupValues[2].trim(), sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         // Paybill must be tried before till: till messages never have "for account".
@@ -133,25 +136,29 @@ object SmsParser {
             val merchant = m.groupValues[2].trim().trimEnd('.')
             val account = m.groupValues[3].trim()
             return Txn(sms.id, sms.sender, body, amount, "KES", "debit",
-                "$merchant · $account", sms.date, isConfident = true)
+                "$merchant · $account", sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         tillPattern.find(core)?.let { m ->
             val amount = parseAmount(m.groupValues[1]) ?: return null
             return Txn(sms.id, sms.sender, body, amount, "KES", "debit",
-                m.groupValues[2].trim().trimEnd('.'), sms.date, isConfident = true)
+                m.groupValues[2].trim().trimEnd('.'), sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         withdrawPattern.find(core)?.let { m ->
             val amount = parseAmount(m.groupValues[1]) ?: return null
             return Txn(sms.id, sms.sender, body, amount, "KES", "debit",
-                m.groupValues[2].trim().trimEnd('.'), sms.date, isConfident = true)
+                m.groupValues[2].trim().trimEnd('.'), sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         airtimePattern.find(core)?.let { m ->
             val amount = parseAmount(m.groupValues[1]) ?: return null
             return Txn(sms.id, sms.sender, body, amount, "KES", "debit",
-                "Airtime", sms.date, isConfident = true)
+                "Airtime", sms.date, isConfident = true,
+                balance = extractBalance(body))
         }
 
         return null
@@ -283,6 +290,13 @@ object SmsParser {
             .minOrNull()
         if (cutAt != null) name = name.substring(0, cutAt)
         return name.trim().trimEnd('.', ',', ';').take(40)
+    }
+
+    private fun extractBalance(body: String): Double? {
+        // "New M-PESA balance is Ksh12,345.00"
+        val match = Regex("balance\\s+is\\s+Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
+            .find(body) ?: return null
+        return parseAmount(match.groupValues[1])
     }
 
     // ---------------------------------------------------------------
