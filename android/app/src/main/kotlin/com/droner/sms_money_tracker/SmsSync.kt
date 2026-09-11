@@ -99,13 +99,19 @@ object SmsSync {
     fun getLatestBalance(context: Context): Double? {
         val cr: ContentResolver = context.contentResolver
         val uri = Uri.parse("content://sms/inbox")
-        val cursor = cr.query(uri, arrayOf("body"), "address = 'MPESA'", null, "date DESC")
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val body = it.getString(0) ?: return null
-                val match = Regex("balance\\s+is\\s+Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-                    .find(body) ?: return null
-                return match.groupValues[1].replace(",", "").toDoubleOrNull()
+        val matchers = arrayOf(
+            "address LIKE '%MPESA%'",
+            "address LIKE '%M-PESA%'"
+        )
+        val pattern = Regex("balance\\s+is\\s+Ksh([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
+        for (where in matchers) {
+            val cursor = cr.query(uri, arrayOf("body"), where, null, "date DESC LIMIT 40")
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val body = it.getString(0) ?: continue
+                    val match = pattern.find(body) ?: continue
+                    return match.groupValues[1].replace(",", "").toDoubleOrNull()
+                }
             }
         }
         return null

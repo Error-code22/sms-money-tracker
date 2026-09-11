@@ -108,7 +108,20 @@ class MainActivity : FlutterFragmentActivity() {
                         runDb(result) { SmsDb.getTransactions(applicationContext, filter, query) }
                     }
                     "getSummary" -> {
-                        runDb(result) { SmsDb.getSummary(applicationContext) }
+                        runDb(result) {
+                            val raw = SmsDb.getSummary(applicationContext)
+                            // Old rows have no balance column; fall back to the latest
+                            // M-Pesa SMS that actually contains a balance.
+                            try {
+                                val obj = org.json.JSONObject(raw)
+                                if (obj.isNull("balance")) {
+                                    obj.put("balance", SmsSync.getLatestBalance(applicationContext))
+                                }
+                                obj.toString()
+                            } catch (_: Exception) {
+                                raw
+                            }
+                        }
                     }
                     "getLatestBalance" -> {
                         try {
