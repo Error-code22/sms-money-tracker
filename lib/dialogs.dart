@@ -189,7 +189,7 @@ class _AboutDialogState extends State<_AboutDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Reads your M-Pesa/bank SMS on-device and shows you where your money actually goes. No backend, no cloud, no accounts.',
+            'Reads your M-Pesa/bank SMS on-device and shows you where your money actually goes. No accounts. Optional: a one-way upload of your transactions to your own logbook dashboard (Settings → Upload to logbook).',
           ),
           const SizedBox(height: 12),
           if (_checking)

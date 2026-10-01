@@ -21,6 +21,13 @@ class SmsService {
     return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
+  /// Every row in the DB, no 500 cap — used by cloud sync.
+  static Future<List<Map<String, dynamic>>> getAllTransactions() async {
+    final raw = await _channel.invokeMethod<String>('getAllTransactions');
+    if (raw == null || raw.isEmpty) return [];
+    return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<Map<String, dynamic>> getSummary() async {
     final raw = await _channel.invokeMethod<String>('getSummary');
     if (raw == null || raw.isEmpty) return {};

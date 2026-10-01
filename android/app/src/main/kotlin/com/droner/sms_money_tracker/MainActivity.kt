@@ -107,6 +107,9 @@ class MainActivity : FlutterFragmentActivity() {
                         val query = call.argument<String>("query") ?: ""
                         runDb(result) { SmsDb.getTransactions(applicationContext, filter, query) }
                     }
+                    "getAllTransactions" -> {
+                        runDb(result) { SmsDb.getAllTransactions(applicationContext) }
+                    }
                     "getSummary" -> {
                         runDb(result) {
                             val raw = SmsDb.getSummary(applicationContext)

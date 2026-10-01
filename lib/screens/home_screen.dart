@@ -11,6 +11,7 @@ import '../budgets.dart';
 import '../dialogs.dart';
 import '../models/transaction.dart';
 import '../services/sms_service.dart';
+import '../services/cloud_sync.dart';
 import '../widgets/monthly_chart.dart';
 import 'breakdown_screen.dart';
 import 'charts_screen.dart';
@@ -199,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _load();
       await _maybePromptNotes();
       await SmsService.updateWidget();
+      CloudSync.autoSync();
     } catch (_) {
     } finally {
       if (mounted) setState(() => _syncing = false);
@@ -345,6 +347,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           MaterialPageRoute(builder: (_) => const BatchNoteScreen()),
         );
         _sync();
+      case 'upload':
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Uploading to logbook…')),
+        );
+        final result = await CloudSync.sync(force: true);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message),
+            duration: const Duration(seconds: 4),
+          ),
+        );
       case 'resync':
         if (_syncing) return;
         setState(() => _syncing = true);
@@ -458,6 +473,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const PopupMenuItem(value: 'export', child: Text('Export CSV')),
               const PopupMenuItem(value: 'dedup', child: Text('Remove duplicates')),
               const PopupMenuItem(value: 'batchnotes', child: Text('Edit notes by month')),
+              const PopupMenuItem(value: 'upload', child: Text('Upload to logbook')),
               PopupMenuItem(
                 value: 'resync',
                 enabled: !_syncing,
@@ -613,7 +629,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Grant SMS access and disable battery optimization so Tecno/HiOS does not kill the app. Your data never leaves this phone.',
+              'Grant SMS access and disable battery optimization so Tecno/HiOS does not kill the app. Your data stays on this phone unless you turn on Upload to logbook in Settings.',
             ),
             const SizedBox(height: 12),
             if (!smsGranted)

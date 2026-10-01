@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'ai_advisor.dart';
 import 'budgets.dart';
 import 'category_rules.dart';
+import 'services/cloud_sync.dart';
 import 'services/sms_service.dart';
 
 class AppLock {
@@ -387,6 +388,7 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
   bool hasPin = await AppLock.hasPin();
   int grace = await AppLock.lockGraceSeconds();
   bool digest = true;
+  bool cloudSync = await CloudSync.isEnabled();
   try {
     final prefs = await SharedPreferences.getInstance();
     digest = prefs.getBool('digest_enabled') ?? true;
@@ -469,6 +471,19 @@ Future<void> showSettingsDialog(BuildContext context, {required VoidCallback onC
                 onTap: () => showAiAdvisorDialog(dialogContext),
               ),
               const Divider(),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Upload to logbook'),
+                subtitle: const Text(
+                  'Send transactions to your Pixel Spot logbook dashboard. '
+                  'Runs in the background; can be triggered anytime from the ⋮ menu.',
+                ),
+                value: cloudSync,
+                onChanged: (value) async {
+                  await CloudSync.setEnabled(value);
+                  setState(() => cloudSync = value);
+                },
+              ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Weekly digest'),

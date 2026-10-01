@@ -37,7 +37,8 @@ class SmsDbHelper(context: Context) : SQLiteOpenHelper(context, "sms_money.db", 
                 interest REAL,
                 shape TEXT,
                 source TEXT NOT NULL DEFAULT 'sms',
-                note TEXT
+                note TEXT,
+                balance REAL
             )
             """.trimIndent()
         )
@@ -146,9 +147,10 @@ object SmsDb {
             put("shape", shape)
             put("balance", txn.balance)
         }
-        return database.insertWithOnConflict(
+        val result = database.insertWithOnConflict(
             "transactions", null, values, SQLiteDatabase.CONFLICT_IGNORE
-        ) != -1L
+        )
+        return result != -1L
     }
 
     fun confirmTransaction(context: Context, id: Long): Int {
@@ -357,6 +359,20 @@ object SmsDb {
             null,
             "ts DESC",
             "500"
+        )
+        val arr = JSONArray()
+        c.use {
+            while (c.moveToNext()) {
+                arr.put(rowToJson(c))
+            }
+        }
+        return arr.toString()
+    }
+
+    /** Full export for cloud sync: every row, no 500 cap. */
+    fun getAllTransactions(context: Context): String {
+        val c = db(context).query(
+            "transactions", null, "1=1", null, null, null, "ts ASC", null
         )
         val arr = JSONArray()
         c.use {
@@ -757,6 +773,7 @@ object SmsDb {
     private fun rowToJson(c: android.database.Cursor): JSONObject {
         return JSONObject().apply {
             put("id", c.getLong(c.getColumnIndexOrThrow("id")))
+            put("sms_id", c.getString(c.getColumnIndexOrThrow("sms_id")) ?: "")
             put("sender", c.getString(c.getColumnIndexOrThrow("sender")) ?: "")
             put("body", c.getString(c.getColumnIndexOrThrow("body")) ?: "")
             put("amount", c.getDouble(c.getColumnIndexOrThrow("amount")))
